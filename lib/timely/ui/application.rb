@@ -604,7 +604,7 @@ module Timely
     # --- Actions ---
 
     def go_to_date
-      input = @panes[:bottom].ask("Go to: ", "")
+      input = bottom_ask("Go to: ", "")
       return if input.nil? || input.strip.empty?
 
       input = input.strip
@@ -664,11 +664,11 @@ module Timely
       # Blank bottom pane with form header
       blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".b)
 
-      title = @panes[:bottom].ask(" Title: ", "")
+      title = bottom_ask(" Title: ", "")
       return cancel_create if title.nil? || title.strip.empty?
 
       blank_bottom(" New Event: #{title.strip}".b)
-      time_str = @panes[:bottom].ask(" Start time (HH:MM or 'all day'): ", default_time)
+      time_str = bottom_ask(" Start time (HH:MM or 'all day'): ", default_time)
       return cancel_create if time_str.nil?
 
       all_day = (time_str.strip.downcase == 'all day')
@@ -683,7 +683,7 @@ module Timely
         start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
 
         blank_bottom(" New Event: #{title.strip} at #{time_str.strip}".b)
-        dur_str = @panes[:bottom].ask(" Duration in minutes: ", "60")
+        dur_str = bottom_ask(" Duration in minutes: ", "60")
         return cancel_create if dur_str.nil?
         duration = dur_str.strip.to_i
         duration = 60 if duration <= 0
@@ -705,13 +705,27 @@ module Timely
     end
 
     def blank_bottom(header = "")
-      lines = ["", ""]
+      lines = []
+      lines << ""
       lines << header unless header.empty?
+      lines << ""
       while lines.length < @panes[:bottom].h
         lines << ""
       end
       @panes[:bottom].text = lines.join("\n")
       @panes[:bottom].full_refresh
+    end
+
+    def bottom_ask(prompt, default = "")
+      # Create a one-line prompt pane at the top of the bottom pane area
+      prompt_y = @panes[:bottom].y
+      @panes[:bottom].text = ""
+      @panes[:bottom].full_refresh
+      prompt_pane = Rcurses::Pane.new(1, prompt_y, @w, 1)
+      prompt_pane.border = false
+      prompt_pane.scroll = false
+      result = prompt_pane.ask(prompt, default)
+      result
     end
 
     def cancel_create
@@ -726,7 +740,7 @@ module Timely
       return show_feedback("No event selected", 245) unless evt
 
       blank_bottom(" Edit Event".b)
-      new_title = @panes[:bottom].ask(" Title: ", evt['title'] || "")
+      new_title = bottom_ask(" Title: ", evt['title'] || "")
       return if new_title.nil?
 
       @db.save_event(
@@ -762,7 +776,7 @@ module Timely
       return show_feedback("No event selected", 245) unless evt
 
       blank_bottom(" Delete Event".b)
-      confirm = @panes[:bottom].ask(" Delete '#{evt['title']}'? (y/n): ", "")
+      confirm = bottom_ask(" Delete '#{evt['title']}'? (y/n): ", "")
       return unless confirm&.strip&.downcase == 'y'
 
       @db.delete_event(evt['id'])
