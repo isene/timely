@@ -299,9 +299,10 @@ module Timely
       lon = @config.get('location.lon', 10.7522)
       tz = @config.get('timezone_offset', 1)
 
-      # Sunrise/sunset
+      # Sunrise/sunset (yellow sun)
       sun = Astronomy.sun_times(@selected_date, lat, lon, tz)
-      sun_str = sun ? "  \u2600\u2191#{sun[:rise]} \u2600\u2193#{sun[:set]}" : ""
+      sun_color = Astronomy::BODY_COLORS['sun']
+      sun_str = sun ? "  " + "\u2600".fg(sun_color) + "\u2191#{sun[:rise]} " + "\u2600".fg(sun_color) + "\u2193#{sun[:set]}" : ""
 
       # Visible planets (cached per date)
       @_cached_planets_date ||= nil
@@ -310,7 +311,10 @@ module Timely
         @_cached_planets_date = @selected_date
       end
       planets = @_cached_planets || []
-      planet_str = planets.any? ? "  " + planets.map { |p| p[:symbol] }.join(" ") : ""
+      planet_str = planets.any? ? "  " + planets.map { |p|
+        color = Astronomy::BODY_COLORS[p[:name].downcase] || '888888'
+        p[:symbol].fg(color)
+      }.join(" ") : ""
 
       @panes[:info].text = title + date_str + moon + sun_str + planet_str
       @panes[:info].refresh
@@ -577,21 +581,10 @@ module Timely
         # No events: show day summary
         lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".b
 
-        # Moon phase + visible planets
-        phase = Astronomy.moon_phase(@selected_date)
-        moon_str = " #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)"
-
+        # Astronomical events (solstices, meteor showers, etc.)
         lat = @config.get('location.lat', 59.9139)
         lon = @config.get('location.lon', 10.7522)
         tz = @config.get('timezone_offset', 1)
-        planets = Astronomy.visible_planets(@selected_date, lat, lon, tz)
-        if planets.any?
-          planet_str = planets.map { |p| "#{p[:symbol]}#{p[:name]}" }.join("  ")
-          moon_str += "    Visible: #{planet_str}"
-        end
-        lines << moon_str.fg(245)
-
-        # Astronomical events
         astro = Astronomy.astro_events(@selected_date, lat, lon, tz)
         astro.each { |evt| lines << " #{evt}".fg(180) } if astro.any?
 

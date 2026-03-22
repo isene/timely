@@ -105,6 +105,17 @@ module Timely
       'jupiter' => "\u2643", 'saturn' => "\u2644"
     }.freeze
 
+    # RGB colors matching astropanel
+    BODY_COLORS = {
+      'sun'     => 'FFD700',
+      'moon'    => '888888',
+      'mercury' => '8F6E54',
+      'venus'   => 'E6B07C',
+      'mars'    => 'BC2732',
+      'jupiter' => 'C08040',
+      'saturn'  => 'E8D9A0'
+    }.freeze
+
     # Returns array of planet names visible at night for the given date/location.
     # A planet is "visible" if altitude > 5 degrees at any hour between 20:00-04:00.
     def self.visible_planets(date, lat = 59.9139, lon = 10.7522, tz = 1)
