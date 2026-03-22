@@ -706,6 +706,7 @@ module Timely
 
     def blank_bottom(header = "")
       lines = []
+      lines << ("\u2500" * @w).fg(238)
       lines << ""
       lines << header unless header.empty?
       lines << ""
