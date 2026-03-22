@@ -862,11 +862,7 @@ module Timely
         pref_keys.each_with_index do |(key, label, default), i|
           val = @config.get(key, default)
           if is_color.call(key)
-            swatch = if key.include?('bg')
-              "  ".bg(val.to_i) + " " + "\u2588\u2588".fg(val.to_i)
-            else
-              "\u2588\u2588".fg(val.to_i) + " " + "  ".bg(val.to_i)
-            end
+            swatch = key.include?('bg') ? "  ".bg(val.to_i) : "\u2588\u2588".fg(val.to_i)
             val_str = val.to_s.rjust(3)
             display = "  %-18s %s %s" % [label, val_str, swatch]
           else
