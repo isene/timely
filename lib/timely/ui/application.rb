@@ -362,8 +362,6 @@ module Timely
         combined_lines << " " + parts.join(" ")
       end
 
-      # One row bottom padding (no more)
-      combined_lines << "" if combined_lines.length < @panes[:top].h
       while combined_lines.length < @panes[:top].h
         combined_lines << ""
       end
