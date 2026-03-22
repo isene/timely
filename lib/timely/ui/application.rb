@@ -660,14 +660,29 @@ module Timely
 
     def create_event
       default_time = @selected_slot ? format("%02d:%02d", @selected_slot / 2, (@selected_slot % 2) * 30) : "09:00"
+      calendars = @db.get_calendars
+      default_cal_id = @config.get('default_calendar', 1)
+      cal = calendars.find { |c| c['id'] == default_cal_id } || calendars.first
+      return show_feedback("No calendars configured", 196) unless cal
+      cal_color = cal['color'] || 39
 
-      # Blank bottom pane with form header
-      blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".b)
+      # Calendar picker (if multiple)
+      if calendars.size > 1
+        cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c['name']}" }.join("  ")
+        default_idx = calendars.index(cal) || 0
+        blank_bottom(" New Event".fg(cal_color).b)
+        pick = bottom_ask(" Calendar (#{cal_list}): ", (default_idx + 1).to_s)
+        return cancel_create if pick.nil?
+        idx = pick.strip.to_i - 1
+        cal = calendars[idx] if idx >= 0 && idx < calendars.size
+        cal_color = cal['color'] || 39
+      end
 
+      blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".fg(cal_color).b)
       title = bottom_ask(" Title: ", "")
       return cancel_create if title.nil? || title.strip.empty?
 
-      blank_bottom(" New Event: #{title.strip}".b)
+      blank_bottom(" #{title.strip}".fg(cal_color).b)
       time_str = bottom_ask(" Start time (HH:MM or 'all day'): ", default_time)
       return cancel_create if time_str.nil?
 
@@ -682,7 +697,7 @@ module Timely
         minute = (parts[1] || 0).to_i
         start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
 
-        blank_bottom(" New Event: #{title.strip} at #{time_str.strip}".b)
+        blank_bottom(" #{title.strip} at #{time_str.strip}".fg(cal_color).b)
         dur_str = bottom_ask(" Duration in minutes: ", "60")
         return cancel_create if dur_str.nil?
         duration = dur_str.strip.to_i
@@ -690,18 +705,50 @@ module Timely
         end_ts = start_ts + duration * 60
       end
 
+      # Location
+      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      location = bottom_ask(" Location (Enter to skip): ", "")
+      location = nil if location.nil? || location.strip.empty?
+
+      # Invitees
+      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      invitees_str = bottom_ask(" Invite (comma-separated emails, Enter to skip): ", "")
+      attendees = nil
+      if invitees_str && !invitees_str.strip.empty?
+        attendees = invitees_str.strip.split(',').map { |e| { 'email' => e.strip } }
+      end
+
+      # Attachments via rtfm --pick
+      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      attach_str = bottom_ask(" Add attachments? (y/N): ", "")
+      attachments = nil
+      if attach_str&.strip&.downcase == 'y'
+        # Use rtfm --pick to select files
+        Cursor.show
+        files = `rtfm --pick 2>/dev/null`.strip
+        Cursor.hide
+        Rcurses.clear_screen
+        create_panes
+        if files && !files.empty?
+          attachments = files.split("\n").map { |f| { 'path' => f.strip } }
+        end
+      end
+
       @db.save_event(
         title: title.strip,
         start_time: start_ts,
         end_time: end_ts,
         all_day: all_day,
-        calendar_id: 1,
+        calendar_id: cal['id'],
+        location: location&.strip,
+        attendees: attendees,
+        metadata: attachments ? { 'attachments' => attachments } : nil,
         status: 'confirmed'
       )
 
       load_events_for_range
       render_all
-      show_feedback("Event created: #{title.strip}", 156)
+      show_feedback("Event created: #{title.strip}", cal_color)
     end
 
     def blank_bottom(header = "")
@@ -855,7 +902,8 @@ module Timely
         ['colors.info_bg',        'Info bar bg',      235],
         ['colors.status_bg',      'Status bar bg',    235],
         ['work_hours.start',      'Work hours start', 8],
-        ['work_hours.end',        'Work hours end',   17]
+        ['work_hours.end',        'Work hours end',   17],
+        ['default_calendar',      'Default calendar', 1]
       ]
 
       sel = 0
