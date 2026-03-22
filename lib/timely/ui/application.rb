@@ -709,7 +709,6 @@ module Timely
       lines << ("\u2500" * @w).fg(238)
       lines << ""
       lines << header unless header.empty?
-      lines << ""
       while lines.length < @panes[:bottom].h
         lines << ""
       end
@@ -718,8 +717,8 @@ module Timely
     end
 
     def bottom_ask(prompt, default = "")
-      # Create a one-line prompt pane below the separator line
-      prompt_y = @panes[:bottom].y + 1
+      # Prompt pane below separator + header + blank line
+      prompt_y = @panes[:bottom].y + 3
       prompt_pane = Rcurses::Pane.new(1, prompt_y, @w, 1)
       prompt_pane.border = false
       prompt_pane.scroll = false
