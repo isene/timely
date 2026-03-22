@@ -424,11 +424,9 @@ module Timely
           sel_alt_b = @config.get('colors.selected_bg_b', 234)
           cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
           if is_sel && is_slot_selected
-            cell_bg = 237  # Brightest: selected day + selected slot
+            cell_bg = @config.get('colors.slot_selected_bg', 237)
           elsif is_sel
             cell_bg = row.even? ? sel_alt_a : sel_alt_b
-          elsif is_slot_selected
-            cell_bg = row.even? ? [alt_bg_a + 1, 236].min : [alt_bg_b + 1, 236].min
           else
             cell_bg = cell_bg_base
           end
@@ -754,7 +752,7 @@ module Timely
       rows, cols = IO.console.winsize
       pw = [cols - 20, 56].min
       pw = [pw, 48].max
-      ph = 18
+      ph = 19
       px = (cols - pw) / 2
       py = (rows - ph) / 2
 
@@ -771,6 +769,7 @@ module Timely
         ['colors.saturday',       'Saturday color',   208],
         ['colors.sunday',         'Sunday color',     167],
         ['colors.today',          'Today color',      255],
+        ['colors.slot_selected_bg','Slot selected bg',  237],
         ['colors.info_bg',        'Info bar bg',      235],
         ['colors.status_bg',      'Status bar bg',    235],
         ['work_hours.start',      'Work hours start', 8],
