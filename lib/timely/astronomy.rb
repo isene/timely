@@ -5,9 +5,9 @@ module Timely
       'Full Moon', 'Waning Gibbous', 'Last Quarter', 'Waning Crescent'
     ].freeze
 
-    PHASE_SYMBOLS = %w[
-      \u{1F311} \u{1F312} \u{1F313} \u{1F314}
-      \u{1F315} \u{1F316} \u{1F317} \u{1F318}
+    PHASE_SYMBOLS = [
+      "\u{1F311}", "\u{1F312}", "\u{1F313}", "\u{1F314}",
+      "\u{1F315}", "\u{1F316}", "\u{1F317}", "\u{1F318}"
     ].freeze
 
     # Calculate moon phase for a given Date.

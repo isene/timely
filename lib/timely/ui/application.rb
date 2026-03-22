@@ -348,7 +348,7 @@ module Timely
                 end
 
       @panes[:left].text = content
-      @panes[:left].refresh
+      @panes[:left].full_refresh
     end
 
     def render_right_pane
