@@ -234,21 +234,38 @@ module Timely
         create_panes
       end
 
+      render_info_bar
       render_top_pane
       render_mid_pane
       render_bottom_pane
+      render_status_bar
+    end
+
+    # Info bar: top row with bg color
+    def render_info_bar
+      title = " Timely".b
+      date_str = @selected_date.strftime("  %A, %B %d, %Y")
+      phase = Astronomy.moon_phase(@selected_date)
+      moon = "  #{phase[:symbol]} #{phase[:phase_name]}"
+      @panes[:info].text = title + date_str + moon
+      @panes[:info].refresh
+    end
+
+    # Status bar: bottom row with key hints
+    def render_status_bar
+      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  ?:Help  q:Quit"
+      @panes[:status].text = " " + keys
+      @panes[:status].refresh
     end
 
     # Top pane: horizontal strip of mini-month calendars
     def render_top_pane
       today = Date.today
-      month_width = 23  # 22 chars + 1 space separator
+      month_width = 23
       months_visible = [@w / month_width, 1].max
 
-      # Center the selected month in the strip
       offset = months_visible / 2
 
-      # Build array of (year, month) pairs to render
       months = []
       months_visible.times do |i|
         m_offset = i - offset
@@ -256,29 +273,25 @@ module Timely
         months << [d.year, d.month]
       end
 
-      # Render each mini-month as array of lines
+      # Render each mini-month; current month gets bg color
       rendered = months.map do |year, month|
-        # Only pass selected_day if this is the selected month
         sel_day = (year == @selected_date.year && month == @selected_date.month) ? @selected_date.day : nil
-        UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1)
+        is_current = (year == @selected_date.year && month == @selected_date.month)
+        lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1)
+        # Apply bg to current month
+        if is_current
+          lines.map { |l| l.bg(233) }
+        else
+          lines
+        end
       end
 
-      # Combine side by side
       max_lines = rendered.map(&:length).max || 0
       combined_lines = []
-
-      # Add a separator line at the top with the view title
-      title = " Timely ".b.fg(255)
-      date_str = @selected_date.strftime("%A, %B %d, %Y").fg(245)
-      combined_lines << title + " " + date_str
-
-      # Blank line between title and months
-      combined_lines << ""
 
       max_lines.times do |row|
         parts = rendered.map do |month_lines|
           line = month_lines[row] || ""
-          # Pad each month column to consistent width
           pure_len = Rcurses.display_width(line.respond_to?(:pure) ? line.pure : line)
           padding = (month_width - 1) - pure_len
           padding = 0 if padding < 0
@@ -287,7 +300,6 @@ module Timely
         combined_lines << " " + parts.join(" ")
       end
 
-      # Pad to fill the pane height
       while combined_lines.length < @panes[:top].h
         combined_lines << ""
       end
@@ -298,42 +310,39 @@ module Timely
 
     # Mid pane: week view with events in columns
     def render_mid_pane
-      # Find the Monday of the week containing @selected_date
       week_start = @selected_date - (@selected_date.cwday - 1)
       col_width = (@w - 2) / 7
+      sel_bg = 234       # bg for selected day column
+      alt_bg_a = 233      # alternating row bg (dark)
+      alt_bg_b = 0        # alternating row bg (black/default)
 
       lines = []
 
-      # Separator line
-      lines << ("-" * @w).fg(238)
-
-      # Column headers: day name + date
+      # Column headers
       headers = []
       7.times do |i|
         day = week_start + i
-        day_name = day.strftime("%a")
-        day_num = day.day.to_s
+        header = " #{day.strftime('%a')} #{day.day}"
+        is_sel = (day == @selected_date)
+        is_today = (day == Date.today)
 
-        header = " #{day_name} #{day_num}"
-        if day == @selected_date
-          header = header.b.fg(255)
-        elsif day == Date.today
-          header = header.b.u
+        header = if is_sel
+          header.b.fg(255).bg(sel_bg)
+        elsif is_today
+          header.b.u
         else
-          header = header.fg(245)
+          header.fg(245)
         end
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
-        padding = col_width - pure_len
-        padding = 0 if padding < 0
-        headers << header + " " * padding
+        pad = [col_width - pure_len, 0].max
+        padding = is_sel ? " ".bg(sel_bg) * pad : " " * pad
+        headers << header + padding
       end
       lines << headers.join("")
+      lines << ("\u2500" * @w).fg(238)
 
-      # Another separator
-      lines << ("-" * @w).fg(238)
-
-      # Gather events for each day of the week
+      # Gather events for each day
       week_events = []
       max_events = 0
       7.times do |i|
@@ -343,57 +352,41 @@ module Timely
         max_events = day_evts.length if day_evts.length > max_events
       end
 
-      # Available rows for events (pane height minus header lines)
-      available_rows = @panes[:mid].h - 3
+      available_rows = @panes[:mid].h - 2
       available_rows = [available_rows, 1].max
-      rows_to_show = [max_events, available_rows].min
+      rows_to_show = [max_events, available_rows].max
 
       rows_to_show.times do |row|
+        row_bg = row.even? ? alt_bg_a : alt_bg_b
         parts = []
         7.times do |col|
           day = week_start + col
           evt = week_events[col][row]
-          is_selected_day = (day == @selected_date)
+          is_sel = (day == @selected_date)
+          cell_bg = is_sel ? sel_bg : row_bg
 
           if evt
-            # Format event entry
-            marker = (is_selected_day && row == @selected_event_index) ? ">" : " "
-
-            if evt['all_day'].to_i == 1
-              time_str = "All day"
-            else
-              st = Time.at(evt['start_time'].to_i)
-              time_str = st.strftime('%H:%M')
-            end
-
+            marker = (is_sel && row == @selected_event_index) ? ">" : " "
+            time_str = evt['all_day'].to_i == 1 ? "All day" : Time.at(evt['start_time'].to_i).strftime('%H:%M')
             title = evt['title'] || "(No title)"
             color = evt['calendar_color'] || 39
 
-            # Truncate to fit column
             entry = "#{marker}#{time_str} #{title}"
-            max_entry_len = col_width - 1
-            if entry.length > max_entry_len
-              entry = entry[0, max_entry_len - 1] + "."
-            end
+            max_len = col_width - 1
+            entry = entry[0, max_len - 1] + "." if entry.length > max_len
 
-            if is_selected_day && row == @selected_event_index
-              cell = entry.fg(color).b
-            else
-              cell = entry.fg(color)
-            end
+            cell = (is_sel && row == @selected_event_index) ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
           else
-            cell = " "
+            cell = " ".bg(cell_bg)
           end
 
           pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
-          padding = col_width - pure_len
-          padding = 0 if padding < 0
-          parts << cell + " " * padding
+          pad = [col_width - pure_len, 0].max
+          parts << cell + " ".bg(cell_bg) * pad
         end
         lines << parts.join("")
       end
 
-      # Fill remaining space
       while lines.length < @panes[:mid].h
         lines << ""
       end
