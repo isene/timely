@@ -723,14 +723,9 @@ module Timely
       attach_str = bottom_ask(" Add attachments? (y/N): ", "")
       attachments = nil
       if attach_str&.strip&.downcase == 'y'
-        # Use rtfm --pick to select files
-        Cursor.show
-        files = `rtfm --pick 2>/dev/null`.strip
-        Cursor.hide
-        Rcurses.clear_screen
-        create_panes
+        files = run_rtfm_picker
         if files && !files.empty?
-          attachments = files.split("\n").map { |f| { 'path' => f.strip } }
+          attachments = files.map { |f| { 'path' => f } }
         end
       end
 
@@ -748,7 +743,9 @@ module Timely
 
       load_events_for_range
       render_all
-      show_feedback("Event created: #{title.strip}", cal_color)
+      msg = "Event created: #{title.strip}"
+      msg += " (invites will be sent when calendar sync is configured)" if attendees
+      show_feedback(msg, cal_color)
     end
 
     def blank_bottom(header = "")
@@ -775,6 +772,31 @@ module Timely
 
     def cancel_create
       render_all
+    end
+
+    def run_rtfm_picker
+      require 'shellwords'
+      pick_file = "/tmp/timely_pick_#{Process.pid}.txt"
+      File.delete(pick_file) if File.exist?(pick_file)
+
+      system("stty sane 2>/dev/null")
+      Cursor.show
+      system("rtfm --pick=#{Shellwords.escape(pick_file)}")
+      $stdin.raw!
+      $stdin.echo = false
+      Cursor.hide
+      Rcurses.clear_screen
+      setup_display
+      create_panes
+      render_all
+
+      if File.exist?(pick_file)
+        files = File.read(pick_file).lines.map(&:strip).reject(&:empty?)
+        File.delete(pick_file) rescue nil
+        files.select { |f| File.exist?(f) && File.file?(f) }
+      else
+        []
+      end
     end
 
     def edit_event
