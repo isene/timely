@@ -333,7 +333,7 @@ module Timely
       month_width = 23
       months_visible = [@w / month_width, 1].max
 
-      offset = months_visible / 2
+      offset = months_visible / 2 + 1  # Shift left to show one more future month
 
       months = []
       months_visible.times do |i|
@@ -659,16 +659,17 @@ module Timely
     end
 
     def create_event
-      title = @panes[:bottom].ask("Event title: ", "")
-      return if title.nil? || title.strip.empty?
+      default_time = @selected_slot ? format("%02d:%02d", @selected_slot / 2, (@selected_slot % 2) * 30) : "09:00"
 
-      default_time = if @selected_slot
-        format("%02d:%02d", @selected_slot / 2, (@selected_slot % 2) * 30)
-      else
-        "09:00"
-      end
-      time_str = @panes[:bottom].ask("Start time (HH:MM, or 'all day'): ", default_time)
-      return if time_str.nil?
+      # Blank bottom pane with form header
+      blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".b)
+
+      title = @panes[:bottom].ask(" Title: ", "")
+      return cancel_create if title.nil? || title.strip.empty?
+
+      blank_bottom(" New Event: #{title.strip}".b)
+      time_str = @panes[:bottom].ask(" Start time (HH:MM or 'all day'): ", default_time)
+      return cancel_create if time_str.nil?
 
       all_day = (time_str.strip.downcase == 'all day')
 
@@ -681,8 +682,9 @@ module Timely
         minute = (parts[1] || 0).to_i
         start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
 
-        dur_str = @panes[:bottom].ask("Duration in minutes: ", "60")
-        return if dur_str.nil?
+        blank_bottom(" New Event: #{title.strip} at #{time_str.strip}".b)
+        dur_str = @panes[:bottom].ask(" Duration in minutes: ", "60")
+        return cancel_create if dur_str.nil?
         duration = dur_str.strip.to_i
         duration = 60 if duration <= 0
         end_ts = start_ts + duration * 60
@@ -702,6 +704,21 @@ module Timely
       show_feedback("Event created: #{title.strip}", 156)
     end
 
+    def blank_bottom(header = "")
+      lines = [""]
+      lines << header unless header.empty?
+      lines << ""
+      while lines.length < @panes[:bottom].h
+        lines << ""
+      end
+      @panes[:bottom].text = lines.join("\n")
+      @panes[:bottom].full_refresh
+    end
+
+    def cancel_create
+      render_all
+    end
+
     def edit_event
       events = events_on_selected_day
       return show_feedback("No event to edit", 245) if events.empty?
@@ -709,7 +726,8 @@ module Timely
       evt = events[@selected_event_index]
       return show_feedback("No event selected", 245) unless evt
 
-      new_title = @panes[:bottom].ask("Title: ", evt['title'] || "")
+      blank_bottom(" Edit Event".b)
+      new_title = @panes[:bottom].ask(" Title: ", evt['title'] || "")
       return if new_title.nil?
 
       @db.save_event(
@@ -744,7 +762,8 @@ module Timely
       evt = events[@selected_event_index]
       return show_feedback("No event selected", 245) unless evt
 
-      confirm = @panes[:bottom].ask("Delete '#{evt['title']}'? (y/n): ", "")
+      blank_bottom(" Delete Event".b)
+      confirm = @panes[:bottom].ask(" Delete '#{evt['title']}'? (y/n): ", "")
       return unless confirm&.strip&.downcase == 'y'
 
       @db.delete_event(evt['id'])
