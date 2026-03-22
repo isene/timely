@@ -293,7 +293,7 @@ module Timely
       title = " Timely".b
       date_str = @selected_date.strftime("  %A, %B %d, %Y")
       phase = Astronomy.moon_phase(@selected_date)
-      moon = "  #{phase[:symbol]} #{phase[:phase_name]}"
+      moon = "  #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)"
 
       lat = @config.get('location.lat', 59.9139)
       lon = @config.get('location.lon', 10.7522)
