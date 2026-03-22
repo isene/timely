@@ -705,9 +705,8 @@ module Timely
     end
 
     def blank_bottom(header = "")
-      lines = [""]
+      lines = ["", ""]
       lines << header unless header.empty?
-      lines << ""
       while lines.length < @panes[:bottom].h
         lines << ""
       end
