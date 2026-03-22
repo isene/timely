@@ -119,10 +119,11 @@ module Timely
     def move_slot_down
       work_start = @config.get('work_hours.start', 8) rescue 8
       @selected_slot ||= work_start * 2
-      @selected_slot = [@selected_slot + 1, 47].min
+      @selected_slot = @selected_slot >= 47 ? 0 : @selected_slot + 1
       available_rows = @panes[:mid].h - 3
-      # Scroll down if selection reaches bottom of visible area
-      if @selected_slot - @slot_offset >= available_rows
+      if @selected_slot == 0
+        @slot_offset = 0
+      elsif @selected_slot - @slot_offset >= available_rows
         @slot_offset = @selected_slot - available_rows + 1
       end
       render_mid_pane
@@ -132,9 +133,11 @@ module Timely
     def move_slot_up
       work_start = @config.get('work_hours.start', 8) rescue 8
       @selected_slot ||= work_start * 2
-      @selected_slot = [@selected_slot - 1, 0].max
-      # Scroll up if selection reaches top of visible area
-      if @selected_slot < @slot_offset
+      @selected_slot = @selected_slot <= 0 ? 47 : @selected_slot - 1
+      available_rows = @panes[:mid].h - 3
+      if @selected_slot == 47
+        @slot_offset = [48 - available_rows, 0].max
+      elsif @selected_slot < @slot_offset
         @slot_offset = @selected_slot
       end
       render_mid_pane
