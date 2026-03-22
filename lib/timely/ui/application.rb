@@ -718,10 +718,8 @@ module Timely
     end
 
     def bottom_ask(prompt, default = "")
-      # Create a one-line prompt pane at the top of the bottom pane area
+      # Create a one-line prompt pane below the separator line
       prompt_y = @panes[:bottom].y + 1
-      @panes[:bottom].text = ""
-      @panes[:bottom].full_refresh
       prompt_pane = Rcurses::Pane.new(1, prompt_y, @w, 1)
       prompt_pane.border = false
       prompt_pane.scroll = false
