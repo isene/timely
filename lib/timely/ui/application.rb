@@ -16,14 +16,9 @@ module Timely
       @db = Database.new
       @config = Config.new
       @running = false
-      @current_view = :month
       @selected_date = Date.today
-      @selected_hour = @config.get('work_hours.start', 8)
-      @width = 4  # Left pane width ratio (out of 10)
-      @border = 1
-      @events_cache = {}
-      @work_start = @config.get('work_hours.start', 8)
-      @work_end = @config.get('work_hours.end', 17)
+      @selected_event_index = 0
+      @events_by_date = {}
     end
 
     def run
@@ -33,7 +28,7 @@ module Timely
       setup_display
       create_panes
 
-      load_events
+      load_events_for_range
       render_all
 
       # Flush stdin before loop
@@ -42,9 +37,7 @@ module Timely
       @running = true
       loop do
         chr = getchr(2, flush: false)
-        if chr
-          handle_input_key(chr)
-        end
+        handle_input(chr) if chr
         break unless @running
       end
     ensure
@@ -53,63 +46,58 @@ module Timely
 
     private
 
-    def handle_input_key(chr)
+    # --- Input handling ---
+
+    def handle_input(chr)
       case chr
-      # Navigation
-      when 'h', 'LEFT'
-        navigate_left
-      when 'l', 'RIGHT'
-        navigate_right
+      when 'y'
+        @selected_date = safe_date(@selected_date.year + 1, @selected_date.month, @selected_date.day)
+        date_changed
+      when 'Y'
+        @selected_date = safe_date(@selected_date.year - 1, @selected_date.month, @selected_date.day)
+        date_changed
+      when 'm'
+        @selected_date = @selected_date >> 1
+        date_changed
+      when 'M'
+        @selected_date = @selected_date << 1
+        date_changed
+      when 'w'
+        @selected_date += 7
+        date_changed
+      when 'W'
+        @selected_date -= 7
+        date_changed
+      when 'd', 'l', 'RIGHT'
+        @selected_date += 1
+        date_changed
+      when 'D', 'h', 'LEFT'
+        @selected_date -= 1
+        date_changed
       when 'j', 'DOWN'
-        navigate_down
+        select_next_event_on_day
       when 'k', 'UP'
-        navigate_up
-      when 'PgDOWN'
-        navigate_page_down
-      when 'PgUP'
-        navigate_page_up
-
-      # View switching
-      when '1'
-        switch_view(:year)
-      when '2'
-        switch_view(:quarter)
-      when '3'
-        switch_view(:month)
-      when '4'
-        switch_view(:week)
-      when '5'
-        switch_view(:workweek)
-      when '6'
-        switch_view(:day)
-
-      # Actions
-      when 'T'
+        select_prev_event_on_day
+      when 'e'
+        jump_to_next_event
+      when 'E'
+        jump_to_prev_event
+      when 't'
         @selected_date = Date.today
-        @selected_hour = @work_start
-        load_events
-        render_all
+        @selected_event_index = 0
+        date_changed
       when 'g'
         go_to_date
       when 'n'
-        show_feedback("Event creation not yet implemented", 226)
+        create_event
       when 'ENTER'
-        # Switch to day view for selected date
-        switch_view(:day)
-
-      # UI
-      when 'w'
-        @width = (@width % 8) + 1
-        setup_display
-        create_panes
-        render_all
-      when 'B'
-        @border = (@border + 1) % 4
-        set_borders
-        render_all
+        edit_event
+      when 'x', 'DEL'
+        delete_event
+      when 'a'
+        accept_invite
       when 'r'
-        load_events
-        render_all
+        show_feedback("Reply via Heathrow: not yet implemented", 226)
       when '?'
         show_help
       when 'q'
@@ -117,162 +105,125 @@ module Timely
       end
     end
 
-    # Navigation methods
+    # --- Date/event state changes ---
 
-    def navigate_left
-      case @current_view
-      when :year
-        @selected_date = @selected_date << 1  # Previous month
-      when :quarter
-        @selected_date = @selected_date << 1
-      when :month
-        @selected_date = @selected_date - 1  # Previous day
-      when :week, :workweek
-        @selected_date = @selected_date - 1
-      when :day
-        @selected_date = @selected_date - 1
+    def date_changed
+      @selected_event_index = 0
+      load_events_for_range
+      render_all
+    end
+
+    def safe_date(year, month, day)
+      # Clamp day to valid range for the target month
+      last_day = Date.new(year, month, -1).day
+      Date.new(year, month, [day, last_day].min)
+    rescue Date::Error
+      Date.today
+    end
+
+    # --- Event navigation ---
+
+    def events_on_selected_day
+      @events_by_date[@selected_date] || []
+    end
+
+    def select_next_event_on_day
+      events = events_on_selected_day
+      return if events.empty?
+      @selected_event_index = (@selected_event_index + 1) % events.length
+      render_mid_pane
+      render_bottom_pane
+    end
+
+    def select_prev_event_on_day
+      events = events_on_selected_day
+      return if events.empty?
+      @selected_event_index = (@selected_event_index - 1) % events.length
+      render_mid_pane
+      render_bottom_pane
+    end
+
+    def jump_to_next_event
+      events = events_on_selected_day
+      # If there are more events on the current day after the selected one, go to next
+      if events.length > 0 && @selected_event_index < events.length - 1
+        @selected_event_index += 1
+        render_mid_pane
+        render_bottom_pane
+        return
       end
-      load_events
-      render_all
-    end
 
-    def navigate_right
-      case @current_view
-      when :year
-        @selected_date = @selected_date >> 1  # Next month
-      when :quarter
-        @selected_date = @selected_date >> 1
-      when :month
-        @selected_date = @selected_date + 1  # Next day
-      when :week, :workweek
-        @selected_date = @selected_date + 1
-      when :day
-        @selected_date = @selected_date + 1
+      # Scan forward day by day (up to 365 days)
+      (1..365).each do |offset|
+        check_date = @selected_date + offset
+        day_events = @db.get_events_for_date(check_date)
+        if day_events && !day_events.empty?
+          @selected_date = check_date
+          @selected_event_index = 0
+          date_changed
+          return
+        end
       end
-      load_events
-      render_all
+
+      show_feedback("No more events found within the next year", 245)
     end
 
-    def navigate_down
-      case @current_view
-      when :year
-        @selected_date = @selected_date >> 3  # Skip 3 months (next row)
-      when :quarter
-        @selected_date = @selected_date + 7
-      when :month
-        @selected_date = @selected_date + 7  # Next week
-      when :week, :workweek
-        @selected_hour = [@selected_hour + 1, 23].min
-      when :day
-        @selected_hour = [@selected_hour + 1, 23].min
+    def jump_to_prev_event
+      events = events_on_selected_day
+      # If there are more events on the current day before the selected one, go to prev
+      if events.length > 0 && @selected_event_index > 0
+        @selected_event_index -= 1
+        render_mid_pane
+        render_bottom_pane
+        return
       end
-      load_events
-      render_all
-    end
 
-    def navigate_up
-      case @current_view
-      when :year
-        @selected_date = @selected_date << 3  # Skip 3 months back (prev row)
-      when :quarter
-        @selected_date = @selected_date - 7
-      when :month
-        @selected_date = @selected_date - 7  # Previous week
-      when :week, :workweek
-        @selected_hour = [@selected_hour - 1, 0].max
-      when :day
-        @selected_hour = [@selected_hour - 1, 0].max
+      # Scan backward day by day (up to 365 days)
+      (1..365).each do |offset|
+        check_date = @selected_date - offset
+        day_events = @db.get_events_for_date(check_date)
+        if day_events && !day_events.empty?
+          @selected_date = check_date
+          @selected_event_index = day_events.length - 1
+          date_changed
+          return
+        end
       end
-      load_events
-      render_all
+
+      show_feedback("No earlier events found within the past year", 245)
     end
 
-    def navigate_page_down
-      case @current_view
-      when :year
-        @selected_date = Date.new(@selected_date.year + 1, @selected_date.month, @selected_date.day)
-      when :month
-        @selected_date = @selected_date >> 1  # Next month
-      when :week, :workweek
-        @selected_date = @selected_date + 7
-      when :day
-        @selected_date = @selected_date + 7
-      end
-      load_events
-      render_all
-    end
+    # --- Data loading ---
 
-    def navigate_page_up
-      case @current_view
-      when :year
-        @selected_date = Date.new(@selected_date.year - 1, @selected_date.month, @selected_date.day)
-      when :month
-        @selected_date = @selected_date << 1  # Previous month
-      when :week, :workweek
-        @selected_date = @selected_date - 7
-      when :day
-        @selected_date = @selected_date - 7
-      end
-      load_events
-      render_all
-    end
+    def load_events_for_range
+      # Load events covering visible months (a generous range around the selected date)
+      range_start = Date.new(@selected_date.year, @selected_date.month, 1) << 3
+      range_end = Date.new(@selected_date.year, @selected_date.month, -1) >> 3
 
-    def switch_view(view)
-      @current_view = view
-      load_events
-      render_all
-    end
-
-    # Data loading
-
-    def load_events
-      range = visible_date_range
-      start_ts = Time.new(range[:start].year, range[:start].month, range[:start].day, 0, 0, 0).to_i
-      end_ts = Time.new(range[:end].year, range[:end].month, range[:end].day, 23, 59, 59).to_i
+      start_ts = Time.new(range_start.year, range_start.month, range_start.day, 0, 0, 0).to_i
+      end_ts = Time.new(range_end.year, range_end.month, range_end.day, 23, 59, 59).to_i
 
       raw_events = @db.get_events_in_range(start_ts, end_ts)
 
-      # Build events_by_date hash
       @events_by_date = {}
       raw_events.each do |evt|
         st = Time.at(evt['start_time'].to_i).to_date
         et = evt['end_time'] ? Time.at(evt['end_time'].to_i).to_date : st
 
         (st..et).each do |d|
-          next unless d >= range[:start] && d <= range[:end]
+          next unless d >= range_start && d <= range_end
           @events_by_date[d] ||= []
           @events_by_date[d] << evt
         end
       end
+
+      # Clamp selected event index
+      events = events_on_selected_day
+      @selected_event_index = 0 if events.empty?
+      @selected_event_index = events.length - 1 if @selected_event_index >= events.length
     end
 
-    def visible_date_range
-      case @current_view
-      when :year
-        { start: Date.new(@selected_date.year, 1, 1),
-          end: Date.new(@selected_date.year, 12, 31) }
-      when :quarter
-        q_start = ((@selected_date.month - 1) / 3) * 3 + 1
-        { start: Date.new(@selected_date.year, q_start, 1),
-          end: Date.new(@selected_date.year, q_start + 2, -1) }
-      when :month
-        { start: Date.new(@selected_date.year, @selected_date.month, 1),
-          end: Date.new(@selected_date.year, @selected_date.month, -1) }
-      when :week
-        week_start = @selected_date - (@selected_date.cwday - 1)
-        { start: week_start, end: week_start + 6 }
-      when :workweek
-        week_start = @selected_date - (@selected_date.cwday - 1)
-        { start: week_start, end: week_start + 4 }
-      when :day
-        { start: @selected_date, end: @selected_date }
-      else
-        { start: Date.new(@selected_date.year, @selected_date.month, 1),
-          end: Date.new(@selected_date.year, @selected_date.month, -1) }
-      end
-    end
-
-    # Rendering
+    # --- Rendering ---
 
     def render_all
       # Check for terminal resize
@@ -283,187 +234,479 @@ module Timely
         create_panes
       end
 
-      render_top_bar
-      render_left_pane
-      render_right_pane
-      render_bottom_bar
+      render_top_pane
+      render_mid_pane
+      render_bottom_pane
     end
 
-    def render_left_pane
-      content = case @current_view
-                when :year
-                  UI::Views::Year.render_year(
-                    @selected_date.year,
-                    @selected_date.month,
-                    @selected_date.day,
-                    @events_by_date || {},
-                    @panes[:left].w,
-                    @panes[:left].h
-                  )
-                when :month, :quarter
-                  UI::Views::Month.render_month(
-                    @selected_date.year,
-                    @selected_date.month,
-                    @selected_date.day,
-                    @events_by_date || {},
-                    @panes[:left].w,
-                    @panes[:left].h
-                  )
-                when :week
-                  week_start = @selected_date - (@selected_date.cwday - 1)
-                  UI::Views::Week.render_week(
-                    week_start,
-                    nil,
-                    @events_by_date || {},
-                    @panes[:left].w,
-                    @panes[:left].h,
-                    work_start: @work_start,
-                    work_end: @work_end
-                  )
-                when :workweek
-                  week_start = @selected_date - (@selected_date.cwday - 1)
-                  UI::Views::Week.render_week(
-                    week_start,
-                    nil,
-                    @events_by_date || {},
-                    @panes[:left].w,
-                    @panes[:left].h,
-                    work_start: @work_start,
-                    work_end: @work_end,
-                    workweek: true
-                  )
-                when :day
-                  events = (@events_by_date || {})[@selected_date] || []
-                  UI::Views::Day.render_day(
-                    @selected_date,
-                    @selected_hour,
-                    events,
-                    @panes[:left].w,
-                    @panes[:left].h,
-                    work_start: @work_start,
-                    work_end: @work_end
-                  )
-                else
-                  "Unknown view: #{@current_view}"
-                end
+    # Top pane: horizontal strip of mini-month calendars
+    def render_top_pane
+      today = Date.today
+      month_width = 23  # 22 chars + 1 space separator
+      months_visible = [@w / month_width, 1].max
 
-      @panes[:left].text = content
-      @panes[:left].full_refresh
+      # Center the selected month in the strip
+      offset = months_visible / 2
+
+      # Build array of (year, month) pairs to render
+      months = []
+      months_visible.times do |i|
+        m_offset = i - offset
+        d = @selected_date >> m_offset
+        months << [d.year, d.month]
+      end
+
+      # Render each mini-month as array of lines
+      rendered = months.map do |year, month|
+        # Only pass selected_day if this is the selected month
+        sel_day = (year == @selected_date.year && month == @selected_date.month) ? @selected_date.day : nil
+        UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1)
+      end
+
+      # Combine side by side
+      max_lines = rendered.map(&:length).max || 0
+      combined_lines = []
+
+      # Add a separator line at the top with the view title
+      title = " Timely ".b.fg(255)
+      date_str = @selected_date.strftime("%A, %B %d, %Y").fg(245)
+      combined_lines << title + " " + date_str
+
+      # Blank line between title and months
+      combined_lines << ""
+
+      max_lines.times do |row|
+        parts = rendered.map do |month_lines|
+          line = month_lines[row] || ""
+          # Pad each month column to consistent width
+          pure_len = Rcurses.display_width(line.respond_to?(:pure) ? line.pure : line)
+          padding = (month_width - 1) - pure_len
+          padding = 0 if padding < 0
+          line + " " * padding
+        end
+        combined_lines << " " + parts.join(" ")
+      end
+
+      # Pad to fill the pane height
+      while combined_lines.length < @panes[:top].h
+        combined_lines << ""
+      end
+
+      @panes[:top].text = combined_lines.join("\n")
+      @panes[:top].full_refresh
     end
 
-    def render_right_pane
+    # Mid pane: week view with events in columns
+    def render_mid_pane
+      # Find the Monday of the week containing @selected_date
+      week_start = @selected_date - (@selected_date.cwday - 1)
+      col_width = (@w - 2) / 7
+
       lines = []
-      events = (@events_by_date || {})[@selected_date] || []
 
-      # Date header
-      lines << @selected_date.strftime("  %A, %B %d").b
-      lines << ""
+      # Separator line
+      lines << ("-" * @w).fg(238)
 
-      # Moon phase
-      phase = Astronomy.moon_phase(@selected_date)
-      lines << "  #{phase[:symbol]} #{phase[:phase_name]}"
-      lines << "  Illumination: #{(phase[:illumination] * 100).round}%"
-      lines << ""
+      # Column headers: day name + date
+      headers = []
+      7.times do |i|
+        day = week_start + i
+        day_name = day.strftime("%a")
+        day_num = day.day.to_s
 
-      if events.empty?
-        lines << "  No events".fg(245)
-      else
-        lines << "  Events:".b
-        lines << ""
-        events.each do |evt|
-          color = evt['calendar_color'] || 39
+        header = " #{day_name} #{day_num}"
+        if day == @selected_date
+          header = header.b.fg(255)
+        elsif day == Date.today
+          header = header.b.u
+        else
+          header = header.fg(245)
+        end
 
-          # Time
-          if evt['all_day'].to_i == 1
-            time_str = "  All day"
-          else
-            st = Time.at(evt['start_time'].to_i)
-            time_str = "  #{st.strftime('%H:%M')}"
-            if evt['end_time']
-              et = Time.at(evt['end_time'].to_i)
-              time_str += " - #{et.strftime('%H:%M')}"
+        pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
+        padding = col_width - pure_len
+        padding = 0 if padding < 0
+        headers << header + " " * padding
+      end
+      lines << headers.join("")
+
+      # Another separator
+      lines << ("-" * @w).fg(238)
+
+      # Gather events for each day of the week
+      week_events = []
+      max_events = 0
+      7.times do |i|
+        day = week_start + i
+        day_evts = (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
+        week_events << day_evts
+        max_events = day_evts.length if day_evts.length > max_events
+      end
+
+      # Available rows for events (pane height minus header lines)
+      available_rows = @panes[:mid].h - 3
+      available_rows = [available_rows, 1].max
+      rows_to_show = [max_events, available_rows].min
+
+      rows_to_show.times do |row|
+        parts = []
+        7.times do |col|
+          day = week_start + col
+          evt = week_events[col][row]
+          is_selected_day = (day == @selected_date)
+
+          if evt
+            # Format event entry
+            marker = (is_selected_day && row == @selected_event_index) ? ">" : " "
+
+            if evt['all_day'].to_i == 1
+              time_str = "All day"
+            else
+              st = Time.at(evt['start_time'].to_i)
+              time_str = st.strftime('%H:%M')
             end
+
+            title = evt['title'] || "(No title)"
+            color = evt['calendar_color'] || 39
+
+            # Truncate to fit column
+            entry = "#{marker}#{time_str} #{title}"
+            max_entry_len = col_width - 1
+            if entry.length > max_entry_len
+              entry = entry[0, max_entry_len - 1] + "."
+            end
+
+            if is_selected_day && row == @selected_event_index
+              cell = entry.fg(color).b
+            else
+              cell = entry.fg(color)
+            end
+          else
+            cell = " "
           end
 
-          lines << time_str.fg(245)
-          lines << "  #{evt['title']}".fg(color).b
+          pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
+          padding = col_width - pure_len
+          padding = 0 if padding < 0
+          parts << cell + " " * padding
+        end
+        lines << parts.join("")
+      end
 
-          if evt['location'] && !evt['location'].to_s.empty?
-            lines << "  @ #{evt['location']}".fg(245)
+      # Fill remaining space
+      while lines.length < @panes[:mid].h
+        lines << ""
+      end
+
+      @panes[:mid].text = lines.join("\n")
+      @panes[:mid].full_refresh
+    end
+
+    # Bottom pane: event details or day summary
+    def render_bottom_pane
+      lines = []
+      events = events_on_selected_day
+
+      # Separator
+      lines << ("-" * @w).fg(238)
+
+      if events.any? && @selected_event_index < events.length
+        evt = events[@selected_event_index]
+        color = evt['calendar_color'] || 39
+
+        # Title
+        lines << " #{evt['title'] || '(No title)'}".fg(color).b
+
+        # Date and time
+        if evt['all_day'].to_i == 1
+          lines << " #{@selected_date.strftime('%a %Y-%m-%d')}  All day".fg(252)
+        else
+          st = Time.at(evt['start_time'].to_i)
+          time_str = " #{st.strftime('%a %Y-%m-%d  %H:%M')}"
+          if evt['end_time']
+            et = Time.at(evt['end_time'].to_i)
+            time_str += " - #{et.strftime('%H:%M')}"
           end
+          lines << time_str.fg(252)
+        end
 
-          if evt['description'] && !evt['description'].to_s.empty?
-            desc = evt['description'].to_s.slice(0, @panes[:right].w - 6)
-            lines << "  #{desc}".fg(248)
-          end
+        # Location
+        if evt['location'] && !evt['location'].to_s.strip.empty?
+          loc = evt['location'].to_s
+          loc = loc[0, @w - 4] if loc.length > @w - 4
+          lines << " Location: #{loc}".fg(245)
+        end
 
-          cal_name = evt['calendar_name'] || 'Unknown'
-          lines << "  [#{cal_name}]".fg(240)
+        # Organizer
+        if evt['organizer'] && !evt['organizer'].to_s.strip.empty?
+          lines << " Organizer: #{evt['organizer']}".fg(245)
+        end
+
+        # Status
+        status_parts = []
+        status_parts << "Status: #{evt['status']}" if evt['status']
+        status_parts << "My status: #{evt['my_status']}" if evt['my_status']
+        lines << " #{status_parts.join('  |  ')}".fg(245) unless status_parts.empty?
+
+        # Calendar name
+        cal_name = evt['calendar_name'] || 'Unknown'
+        lines << " Calendar: #{cal_name}".fg(240)
+
+        # Description (truncated)
+        if evt['description'] && !evt['description'].to_s.strip.empty?
+          desc = evt['description'].to_s.gsub("\n", " ").strip
+          desc = desc[0, @w - 4] if desc.length > @w - 4
           lines << ""
+          lines << " #{desc}".fg(248)
+        end
+
+        # Action hints
+        lines << ""
+        hints = "[ENTER]edit  [x]delete  [a]accept  [r]reply  [?]help  [q]quit".fg(240)
+        lines << " #{hints}"
+      else
+        # No events: show day summary
+        lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".b
+
+        # Moon phase
+        phase = Astronomy.moon_phase(@selected_date)
+        lines << " #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)".fg(245)
+
+        lines << ""
+        lines << " No events scheduled".fg(240)
+        lines << ""
+        hints = "[n]new event  [e/E]jump to event  [g]go to date  [?]help  [q]quit".fg(240)
+        lines << " #{hints}"
+      end
+
+      # Pad to fill pane
+      while lines.length < @panes[:bottom].h
+        lines << ""
+      end
+
+      @panes[:bottom].text = lines.join("\n")
+      @panes[:bottom].full_refresh
+    end
+
+    # --- Actions ---
+
+    def go_to_date
+      input = @panes[:bottom].ask("Go to: ", "")
+      return if input.nil? || input.strip.empty?
+
+      input = input.strip
+
+      parsed = parse_go_to_input(input)
+      if parsed
+        @selected_date = parsed
+        @selected_event_index = 0
+        date_changed
+      else
+        show_feedback("Could not parse date: #{input}", 196)
+      end
+    end
+
+    def parse_go_to_input(input)
+      return Date.today if input.downcase == "today"
+
+      # Exact date: yyyy-mm-dd
+      if input =~ /\A\d{4}-\d{1,2}-\d{1,2}\z/
+        return Date.parse(input) rescue nil
+      end
+
+      # Year only: 4 digits
+      if input =~ /\A\d{4}\z/
+        return Date.new(input.to_i, 1, 1) rescue nil
+      end
+
+      # Month name or abbreviation
+      month_names = %w[january february march april may june july august september october november december]
+      month_abbrevs = %w[jan feb mar apr may jun jul aug sep oct nov dec]
+
+      lower = input.downcase
+      month_names.each_with_index do |name, i|
+        if lower == name || lower == month_abbrevs[i]
+          return Date.new(@selected_date.year, i + 1, 1) rescue nil
         end
       end
 
-      @panes[:right].text = lines.join("\n")
-      @panes[:right].refresh
-    end
-
-    # Actions
-
-    def go_to_date
-      input = @panes[:bottom].ask("Go to date (YYYY-MM-DD): ", "")
-      return if input.nil? || input.strip.empty?
-
-      begin
-        @selected_date = Date.parse(input.strip)
-        load_events
-        render_all
-      rescue Date::Error
-        show_feedback("Invalid date format", 196)
+      # Single number 1-12 could be month, 1-31 could be day
+      if input =~ /\A\d{1,2}\z/
+        num = input.to_i
+        if num >= 1 && num <= 31
+          # Treat as day in current month
+          last_day = Date.new(@selected_date.year, @selected_date.month, -1).day
+          day = [num, last_day].min
+          return Date.new(@selected_date.year, @selected_date.month, day) rescue nil
+        end
       end
+
+      # Last resort: try Date.parse
+      Date.parse(input) rescue nil
     end
+
+    def create_event
+      title = @panes[:bottom].ask("Event title: ", "")
+      return if title.nil? || title.strip.empty?
+
+      time_str = @panes[:bottom].ask("Start time (HH:MM, or 'all day'): ", "09:00")
+      return if time_str.nil?
+
+      all_day = (time_str.strip.downcase == 'all day')
+
+      if all_day
+        start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, 0, 0, 0).to_i
+        end_ts = start_ts + 86400
+      else
+        parts = time_str.strip.split(':')
+        hour = parts[0].to_i
+        minute = (parts[1] || 0).to_i
+        start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
+
+        dur_str = @panes[:bottom].ask("Duration in minutes: ", "60")
+        return if dur_str.nil?
+        duration = dur_str.strip.to_i
+        duration = 60 if duration <= 0
+        end_ts = start_ts + duration * 60
+      end
+
+      @db.save_event(
+        title: title.strip,
+        start_time: start_ts,
+        end_time: end_ts,
+        all_day: all_day,
+        calendar_id: 1,
+        status: 'confirmed'
+      )
+
+      load_events_for_range
+      render_all
+      show_feedback("Event created: #{title.strip}", 156)
+    end
+
+    def edit_event
+      events = events_on_selected_day
+      return show_feedback("No event to edit", 245) if events.empty?
+
+      evt = events[@selected_event_index]
+      return show_feedback("No event selected", 245) unless evt
+
+      new_title = @panes[:bottom].ask("Title: ", evt['title'] || "")
+      return if new_title.nil?
+
+      @db.save_event(
+        id: evt['id'],
+        calendar_id: evt['calendar_id'],
+        external_id: evt['external_id'],
+        title: new_title.strip,
+        description: evt['description'],
+        location: evt['location'],
+        start_time: evt['start_time'],
+        end_time: evt['end_time'],
+        all_day: evt['all_day'].to_i == 1,
+        timezone: evt['timezone'],
+        recurrence_rule: evt['recurrence_rule'],
+        status: evt['status'],
+        organizer: evt['organizer'],
+        attendees: evt['attendees'],
+        my_status: evt['my_status'],
+        alarms: evt['alarms'],
+        metadata: evt['metadata']
+      )
+
+      load_events_for_range
+      render_all
+      show_feedback("Event updated", 156)
+    end
+
+    def delete_event
+      events = events_on_selected_day
+      return show_feedback("No event to delete", 245) if events.empty?
+
+      evt = events[@selected_event_index]
+      return show_feedback("No event selected", 245) unless evt
+
+      confirm = @panes[:bottom].ask("Delete '#{evt['title']}'? (y/n): ", "")
+      return unless confirm&.strip&.downcase == 'y'
+
+      @db.delete_event(evt['id'])
+      @selected_event_index = 0
+
+      load_events_for_range
+      render_all
+      show_feedback("Event deleted", 156)
+    end
+
+    def accept_invite
+      events = events_on_selected_day
+      return show_feedback("No event to accept", 245) if events.empty?
+
+      evt = events[@selected_event_index]
+      return show_feedback("No event selected", 245) unless evt
+
+      @db.save_event(
+        id: evt['id'],
+        calendar_id: evt['calendar_id'],
+        external_id: evt['external_id'],
+        title: evt['title'],
+        description: evt['description'],
+        location: evt['location'],
+        start_time: evt['start_time'],
+        end_time: evt['end_time'],
+        all_day: evt['all_day'].to_i == 1,
+        timezone: evt['timezone'],
+        recurrence_rule: evt['recurrence_rule'],
+        status: evt['status'],
+        organizer: evt['organizer'],
+        attendees: evt['attendees'],
+        my_status: 'accepted',
+        alarms: evt['alarms'],
+        metadata: evt['metadata']
+      )
+
+      load_events_for_range
+      render_all
+      show_feedback("Invite accepted", 156)
+    end
+
+    # --- Feedback ---
 
     def show_feedback(message, color = 156)
-      @panes[:bottom].text = " #{message}".fg(color)
-      @panes[:bottom].refresh
+      lines = [("-" * @w).fg(238), " #{message}".fg(color)]
+      while lines.length < @panes[:bottom].h
+        lines << ""
+      end
+      @panes[:bottom].text = lines.join("\n")
+      @panes[:bottom].full_refresh
     end
+
+    # --- Help ---
 
     def show_help
       help = []
-      help << "Timely - Terminal Calendar".b
+      help << " Timely - Terminal Calendar".b
       help << ""
-      help << "Navigation:".b
-      help << "  h/LEFT    Previous day/month"
-      help << "  l/RIGHT   Next day/month"
-      help << "  j/DOWN    Next week/hour"
-      help << "  k/UP      Previous week/hour"
-      help << "  PgDn      Next month/year"
-      help << "  PgUp      Previous month/year"
+      help << " Navigation:".b
+      help << "   d/l/RIGHT  Next day         D/h/LEFT  Previous day"
+      help << "   w          Next week         W         Previous week"
+      help << "   m          Next month        M         Previous month"
+      help << "   y          Next year         Y         Previous year"
+      help << "   j/DOWN     Next event (day)  k/UP      Previous event (day)"
+      help << "   e          Next event (any)  E         Previous event (any)"
+      help << "   t          Go to today       g         Go to date"
       help << ""
-      help << "Views:".b
-      help << "  1         Year view"
-      help << "  2         Quarter view"
-      help << "  3         Month view"
-      help << "  4         Week view"
-      help << "  5         Work week view"
-      help << "  6         Day view"
-      help << "  Enter     Day view for selected"
+      help << " Events:".b
+      help << "   n          New event         ENTER     Edit event"
+      help << "   x/DEL      Delete event      a         Accept invite"
+      help << "   r          Reply via Heathrow"
       help << ""
-      help << "Actions:".b
-      help << "  T         Go to today"
-      help << "  g         Go to date"
-      help << "  n         New event"
-      help << "  r         Refresh"
+      help << " q  Quit      ?  This help"
       help << ""
-      help << "UI:".b
-      help << "  w         Cycle pane width"
-      help << "  B         Toggle border"
-      help << "  ?         This help"
-      help << "  q         Quit"
-      help << ""
-      help << "Press any key to close..."
+      help << " Press any key to close..."
 
-      @panes[:right].text = help.join("\n")
-      @panes[:right].refresh
+      # Show help in all panes combined (using bottom pane)
+      @panes[:bottom].text = help.join("\n")
+      @panes[:bottom].full_refresh
       getchr
       render_all
     end

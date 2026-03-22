@@ -3,33 +3,31 @@ module Timely
     module Views
       module Month
         WEEKDAYS = %w[Mo Tu We Th Fr Sa Su].freeze
+        MINI_WIDTH = 22
 
-        # Render a month calendar into a string for the left pane.
-        # events_by_date: hash of Date => Array of event hashes
-        def self.render_month(year, month, selected_day, events_by_date, pane_width, pane_height)
+        # Render a compact mini-month calendar.
+        # Returns an array of strings (one per line), about 8-9 lines tall.
+        # selected_day: day number to highlight with reverse video (or nil)
+        # today: Date.today for bold+underline marking
+        # events_by_date: hash of Date => [event_hashes] for coloring event days
+        # width: available width (typically 22 chars)
+        def self.render_mini_month(year, month, selected_day, today, events_by_date, width = MINI_WIDTH)
           lines = []
-          today = Date.today
 
           # Title: centered month and year
           title = Date.new(year, month, 1).strftime("%B %Y")
-          pad = [(pane_width - title.length) / 2, 2].max
+          pad = [(width - title.length) / 2, 1].max
           lines << (" " * pad + title).b
 
-          # Blank line after title
-          lines << ""
-
           # Weekday headers
-          header = "  " + WEEKDAYS.map { |d| d.rjust(2) }.join(" ")
-          lines << header.b
+          header = " " + WEEKDAYS.map { |d| d.rjust(2) }.join(" ")
+          lines << header.fg(245)
 
           # Build calendar grid
           first_day = Date.new(year, month, 1)
           last_day = Date.new(year, month, -1)
-
-          # Monday = 1, Sunday = 7 (ISO)
           start_offset = first_day.cwday - 1
 
-          # Build weeks
           week = []
           start_offset.times { week << nil }
 
@@ -47,25 +45,12 @@ module Timely
             lines << format_week(week, year, month, today, selected_day, events_by_date)
           end
 
-          # Moon phase info for selected day (below calendar)
-          lines << ""
-          sel_date = Date.new(year, month, selected_day) rescue nil
-          if sel_date
-            phase = Astronomy.moon_phase(sel_date)
-            lines << "  #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)"
+          # Pad to consistent height (title + header + 6 week rows = 8 lines)
+          while lines.length < 8
+            lines << " " * width
           end
 
-          # Notable moon phases this month
-          notable = Astronomy.notable_phases_in_month(year, month)
-          unless notable.empty?
-            lines << ""
-            lines << "  Moon phases:".fg(245)
-            notable.each do |n|
-              lines << "  #{n[:day].to_s.rjust(2)}: #{n[:symbol]} #{n[:phase_name]}".fg(245)
-            end
-          end
-
-          lines.join("\n")
+          lines
         end
 
         private
@@ -78,7 +63,7 @@ module Timely
               format_day(day, year, month, today, selected_day, events_by_date)
             end
           end
-          "  " + cells.join(" ")
+          " " + cells.join(" ")
         end
 
         def self.format_day(day, year, month, today, selected_day, events_by_date)
@@ -86,7 +71,11 @@ module Timely
           events = events_by_date[date]
 
           is_today = (date == today)
-          is_selected = (day == selected_day)
+          is_selected = (selected_day && day == selected_day && date.month == today.month && date.year == today.year) ||
+                        (selected_day && day == selected_day)
+
+          # selected_day is only meaningful when this is the selected month
+          # The caller controls which month gets a non-nil selected_day
 
           if is_selected && is_today
             day.to_s.rjust(2).b.u.r

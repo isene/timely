@@ -30,9 +30,6 @@ require_relative 'timely/astronomy'
 # UI components
 require_relative 'timely/ui/panes'
 require_relative 'timely/ui/views/month'
-require_relative 'timely/ui/views/year'
-require_relative 'timely/ui/views/week'
-require_relative 'timely/ui/views/day'
 require_relative 'timely/ui/application'
 
 module Timely
