@@ -367,16 +367,21 @@ module Timely
         is_sel = (day == @selected_date)
         is_today = (day == Date.today)
 
-        header = if is_sel
-          header.b.fg(255).bg(sel_bg)
-        elsif is_today
-          header.b.u
-        elsif day.sunday?
-          header.fg(@config.get('colors.sunday', 167))
+        # Base color: weekend colors or default gray
+        base_color = if day.sunday?
+          @config.get('colors.sunday', 167)
         elsif day.saturday?
-          header.fg(@config.get('colors.saturday', 208))
+          @config.get('colors.saturday', 208)
         else
-          header.fg(245)
+          245
+        end
+
+        header = if is_sel
+          header.b.u.fg(base_color).bg(sel_bg)
+        elsif is_today
+          header.b.u.fg(base_color)
+        else
+          header.fg(base_color)
         end
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
