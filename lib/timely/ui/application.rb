@@ -283,7 +283,20 @@ module Timely
       date_str = @selected_date.strftime("  %A, %B %d, %Y")
       phase = Astronomy.moon_phase(@selected_date)
       moon = "  #{phase[:symbol]} #{phase[:phase_name]}"
-      @panes[:info].text = title + date_str + moon
+
+      # Visible planets summary
+      lat = @config.get('location.lat', 59.9139)
+      lon = @config.get('location.lon', 10.7522)
+      tz = @config.get('timezone_offset', 1)
+      @_cached_planets_date ||= nil
+      if @_cached_planets_date != @selected_date
+        @_cached_planets = Astronomy.visible_planets(@selected_date, lat, lon, tz)
+        @_cached_planets_date = @selected_date
+      end
+      planets = @_cached_planets || []
+      planet_str = planets.any? ? "  " + planets.map { |p| p[:symbol] }.join(" ") : ""
+
+      @panes[:info].text = title + date_str + moon + planet_str
       @panes[:info].refresh
     end
 
@@ -538,9 +551,23 @@ module Timely
         # No events: show day summary
         lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".b
 
-        # Moon phase
+        # Moon phase + visible planets
         phase = Astronomy.moon_phase(@selected_date)
-        lines << " #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)".fg(245)
+        moon_str = " #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)"
+
+        lat = @config.get('location.lat', 59.9139)
+        lon = @config.get('location.lon', 10.7522)
+        tz = @config.get('timezone_offset', 1)
+        planets = Astronomy.visible_planets(@selected_date, lat, lon, tz)
+        if planets.any?
+          planet_str = planets.map { |p| "#{p[:symbol]}#{p[:name]}" }.join("  ")
+          moon_str += "    Visible: #{planet_str}"
+        end
+        lines << moon_str.fg(245)
+
+        # Astronomical events
+        astro = Astronomy.astro_events(@selected_date, lat, lon, tz)
+        astro.each { |evt| lines << " #{evt}".fg(180) } if astro.any?
 
         lines << ""
         lines << " No events scheduled".fg(240)

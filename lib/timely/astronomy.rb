@@ -76,5 +76,76 @@ module Timely
       end
       result
     end
+
+    PLANET_SYMBOLS = {
+      'mercury' => "\u263F", 'venus' => "\u2640", 'mars' => "\u2642",
+      'jupiter' => "\u2643", 'saturn' => "\u2644"
+    }.freeze
+
+    # Returns array of planet names visible at night for the given date/location.
+    # A planet is "visible" if altitude > 5 degrees at any hour between 20:00-04:00.
+    def self.visible_planets(date, lat = 59.9139, lon = 10.7522, tz = 1)
+      begin
+        require 'ephemeris'
+      rescue LoadError
+        ephemeris_path = File.expand_path('~/Main/G/GIT-isene/ephemeris/lib/ephemeris.rb')
+        require ephemeris_path if File.exist?(ephemeris_path)
+      end
+      return [] unless defined?(Ephemeris)
+
+      date_str = date.strftime('%Y-%m-%d')
+      eph = Ephemeris.new(date_str, lat, lon, tz)
+      visible = []
+
+      %w[mercury venus mars jupiter saturn].each do |planet|
+        # Check altitude at evening/night hours
+        [20.0, 21.0, 22.0, 23.0, 0.0, 1.0, 2.0, 3.0, 4.0].any? do |h|
+          alt, _ = eph.body_alt_az(planet, h)
+          if alt > 5
+            body = eph.send(planet)
+            visible << {
+              name: planet.capitalize,
+              symbol: PLANET_SYMBOLS[planet],
+              rise: body[5].is_a?(String) ? body[5][0..4] : body[5].to_s,
+              set: body[7].is_a?(String) ? body[7][0..4] : body[7].to_s
+            }
+            true
+          end
+        end
+      end
+      visible
+    rescue => e
+      []
+    end
+
+    # Notable astronomical events for a date (simple rule-based).
+    # Returns array of event description strings.
+    def self.astro_events(date, lat = 59.9139, lon = 10.7522, tz = 1)
+      events = []
+
+      # Check for notable moon phase
+      phase = moon_phase(date)
+      if notable_phase?(date)
+        events << "#{phase[:symbol]} #{phase[:phase_name]}"
+      end
+
+      # Check for solstices and equinoxes
+      m, d = date.month, date.day
+      events << "\u2600 Summer Solstice" if m == 6 && d == 21
+      events << "\u2744 Winter Solstice" if m == 12 && d == 21
+      events << "\u2600 Vernal Equinox" if m == 3 && d == 20
+      events << "\u2600 Autumnal Equinox" if m == 9 && d == 22
+
+      # Major meteor showers (peak dates)
+      events << "\u2604 Quadrantids peak" if m == 1 && d == 3
+      events << "\u2604 Lyrids peak" if m == 4 && d == 22
+      events << "\u2604 Eta Aquariids peak" if m == 5 && d == 6
+      events << "\u2604 Perseids peak" if m == 8 && d == 12
+      events << "\u2604 Orionids peak" if m == 10 && d == 21
+      events << "\u2604 Leonids peak" if m == 11 && d == 17
+      events << "\u2604 Geminids peak" if m == 12 && d == 14
+
+      events
+    end
   end
 end
