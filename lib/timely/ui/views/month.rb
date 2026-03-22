@@ -83,23 +83,23 @@ module Timely
 
         def self.format_day(day, year, month, today, selected_day, events_by_date)
           date = Date.new(year, month, day)
-          day_str = day.to_s.rjust(2)
           events = events_by_date[date]
 
           is_today = (date == today)
           is_selected = (day == selected_day)
 
-          if is_selected
-            day_str = day_str.bg(17).fg(255)
+          if is_selected && is_today
+            day.to_s.rjust(2).b.u.r
+          elsif is_selected
+            day.to_s.rjust(2).r
           elsif is_today
-            day_str = day_str.b.u
+            day.to_s.rjust(2).b.u
           elsif events && !events.empty?
-            # Color by first event's calendar color
             color = events.first['calendar_color'] || 39
-            day_str = day_str.fg(color)
+            day.to_s.rjust(2).fg(color)
+          else
+            day.to_s.rjust(2)
           end
-
-          day_str
         end
       end
     end
