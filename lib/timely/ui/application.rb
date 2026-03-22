@@ -18,8 +18,9 @@ module Timely
       @running = false
       @selected_date = Date.today
       @selected_event_index = 0
-      @selected_slot = nil  # Half-hour slot index (0-47); nil = no slot selected
-      @slot_offset = 0      # Scroll offset for time slots
+      now = Time.now
+      @selected_slot = now.hour * 2 + (now.min >= 30 ? 1 : 0)
+      @slot_offset = [@selected_slot - 5, 0].max  # Show a few rows above current time
       @events_by_date = {}
     end
 
