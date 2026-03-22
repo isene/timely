@@ -20,8 +20,15 @@ module Timely
           lines << (" " * pad + title).b
 
           # Weekday headers
-          header = " " + WEEKDAYS.map { |d| d.rjust(2) }.join(" ")
-          lines << header.fg(245)
+          header = " " + WEEKDAYS.each_with_index.map { |d, i|
+            s = d.rjust(2)
+            case i
+            when 5 then s.fg(208)  # Saturday
+            when 6 then s.fg(167)  # Sunday
+            else s.fg(245)
+            end
+          }.join(" ")
+          lines << header
 
           # Build calendar grid
           first_day = Date.new(year, month, 1)
@@ -86,6 +93,10 @@ module Timely
           elsif events && !events.empty?
             color = events.first['calendar_color'] || 39
             day.to_s.rjust(2).fg(color)
+          elsif date.sunday?
+            day.to_s.rjust(2).fg(167)
+          elsif date.saturday?
+            day.to_s.rjust(2).fg(208)
           else
             day.to_s.rjust(2)
           end

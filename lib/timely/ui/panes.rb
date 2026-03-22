@@ -28,11 +28,13 @@ module Timely
           bottom_h = [bottom_h, 3].max
         end
 
-        @panes[:info] = Rcurses::Pane.new(1, 1, @w, 1, 255, 235)
+        info_bg = @config ? @config.get('colors.info_bg', 235) : 235
+        status_bg = @config ? @config.get('colors.status_bg', 235) : 235
+        @panes[:info] = Rcurses::Pane.new(1, 1, @w, 1, 255, info_bg)
         @panes[:top] = Rcurses::Pane.new(1, 2, @w, top_h)
         @panes[:mid] = Rcurses::Pane.new(1, 2 + top_h, @w, mid_h)
         @panes[:bottom] = Rcurses::Pane.new(1, 2 + top_h + mid_h, @w, bottom_h)
-        @panes[:status] = Rcurses::Pane.new(1, @h, @w, 1, 252, 235)
+        @panes[:status] = Rcurses::Pane.new(1, @h, @w, 1, 252, status_bg)
 
         @panes.each_value do |p|
           p.border = false

@@ -98,6 +98,8 @@ module Timely
         accept_invite
       when 'r'
         show_feedback("Reply via Heathrow: not yet implemented", 226)
+      when 'P'
+        show_preferences
       when '?'
         show_help
       when 'q'
@@ -253,7 +255,7 @@ module Timely
 
     # Status bar: bottom row with key hints
     def render_status_bar
-      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  ?:Help  q:Quit"
+      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  P:Prefs  ?:Help  q:Quit"
       @panes[:status].text = " " + keys
       @panes[:status].refresh
     end
@@ -280,7 +282,7 @@ module Timely
         lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1)
         # Apply bg to current month
         if is_current
-          lines.map { |l| l.bg(233) }
+          lines.map { |l| l.bg(@config.get('colors.current_month_bg', 233)) }
         else
           lines
         end
@@ -317,9 +319,9 @@ module Timely
       gap = 1       # gap between day columns
       day_col = (@w - time_col - gap * 6) / 7  # 7 days, 6 gaps between them
       day_col = [day_col, 8].max
-      sel_bg = 234
-      alt_bg_a = 233
-      alt_bg_b = 0
+      sel_bg = @config.get('colors.selected_bg_a', 235)
+      alt_bg_a = @config.get('colors.alt_bg_a', 233)
+      alt_bg_b = @config.get('colors.alt_bg_b', 0)
 
       lines = []
 
@@ -335,6 +337,10 @@ module Timely
           header.b.fg(255).bg(sel_bg)
         elsif is_today
           header.b.u
+        elsif day.sunday?
+          header.fg(@config.get('colors.sunday', 167))
+        elsif day.saturday?
+          header.fg(@config.get('colors.saturday', 208))
         else
           header.fg(245)
         end
@@ -379,7 +385,9 @@ module Timely
           day = week_start + col
           is_sel = (day == @selected_date)
           cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
-          cell_bg = is_sel ? [sel_bg, cell_bg_base].max : cell_bg_base
+          sel_alt_a = @config.get('colors.selected_bg_a', 235)
+          sel_alt_b = @config.get('colors.selected_bg_b', 234)
+          cell_bg = is_sel ? (row.even? ? sel_alt_a : sel_alt_b) : cell_bg_base
 
           # Find event at this time slot
           day_ts_start = Time.new(day.year, day.month, day.day, hour, minute, 0).to_i
@@ -478,10 +486,6 @@ module Timely
           lines << " #{desc}".fg(248)
         end
 
-        # Action hints
-        lines << ""
-        hints = "[ENTER]edit  [x]delete  [a]accept  [r]reply  [?]help  [q]quit".fg(240)
-        lines << " #{hints}"
       else
         # No events: show day summary
         lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".b
@@ -492,9 +496,6 @@ module Timely
 
         lines << ""
         lines << " No events scheduled".fg(240)
-        lines << ""
-        hints = "[n]new event  [e/E]jump to event  [g]go to date  [?]help  [q]quit".fg(240)
-        lines << " #{hints}"
       end
 
       # Pad to fill pane
@@ -698,6 +699,97 @@ module Timely
       @panes[:bottom].full_refresh
     end
 
+    # --- Preferences ---
+
+    def show_preferences
+      rows, cols = IO.console.winsize
+      pw = [cols - 20, 56].min
+      pw = [pw, 48].max
+      ph = 18
+      px = (cols - pw) / 2
+      py = (rows - ph) / 2
+
+      popup = Rcurses::Pane.new(px, py, pw, ph, 252, 0)
+      popup.border = true
+      popup.scroll = false
+
+      pref_keys = [
+        ['colors.selected_bg_a',  'Sel. alt bg A',    235],
+        ['colors.selected_bg_b',  'Sel. alt bg B',    234],
+        ['colors.alt_bg_a',       'Row alt bg A',     233],
+        ['colors.alt_bg_b',       'Row alt bg B',     0],
+        ['colors.current_month_bg','Current month bg', 233],
+        ['colors.saturday',       'Saturday color',   208],
+        ['colors.sunday',         'Sunday color',     167],
+        ['colors.today',          'Today color',      255],
+        ['colors.info_bg',        'Info bar bg',      235],
+        ['colors.status_bg',      'Status bar bg',    235],
+        ['work_hours.start',      'Work hours start', 8],
+        ['work_hours.end',        'Work hours end',   17]
+      ]
+
+      sel = 0
+
+      build_popup = -> {
+        popup.full_refresh
+        inner_w = pw - 4
+        lines = []
+        lines << ""
+        lines << "  " + "Preferences".b
+        lines << "  " + ("\u2500" * [inner_w - 3, 1].max).fg(238)
+
+        pref_keys.each_with_index do |(key, label, default), i|
+          val = @config.get(key, default)
+          display = "  %-20s %s" % [label, val.to_s]
+          if i == sel
+            lines << display.fg(39).b
+          else
+            lines << display
+          end
+        end
+
+        lines << ""
+        lines << "  " + "j/k:navigate  ENTER:edit  q/ESC:close".fg(245)
+
+        popup.text = lines.join("\n")
+        popup.ix = 0
+        popup.refresh
+      }
+
+      build_popup.call
+
+      loop do
+        k = getchr
+        case k
+        when 'ESC', 'q'
+          break
+        when 'k', 'UP'
+          sel = (sel - 1) % pref_keys.length
+          build_popup.call
+        when 'j', 'DOWN'
+          sel = (sel + 1) % pref_keys.length
+          build_popup.call
+        when 'ENTER'
+          key, label, default = pref_keys[sel]
+          current = @config.get(key, default)
+          result = popup.ask("#{label}: ", current.to_s)
+          if result && !result.strip.empty?
+            val = result.strip
+            # Convert to integer for numeric settings
+            val = val.to_i if current.is_a?(Integer)
+            @config.set(key, val)
+            @config.save
+          end
+          build_popup.call
+        end
+      end
+
+      # Re-create panes to apply bar color changes
+      Rcurses.clear_screen
+      create_panes
+      render_all
+    end
+
     # --- Help ---
 
     def show_help
@@ -718,7 +810,7 @@ module Timely
       help << "   x/DEL      Delete event      a         Accept invite"
       help << "   r          Reply via Heathrow"
       help << ""
-      help << " q  Quit      ?  This help"
+      help << " P  Preferences   q  Quit   ?  This help"
       help << ""
       help << " Press any key to close..."
 
