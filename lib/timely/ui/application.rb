@@ -18,6 +18,8 @@ module Timely
       @running = false
       @selected_date = Date.today
       @selected_event_index = 0
+      @selected_slot = nil  # Half-hour slot index (0-47); nil = no slot selected
+      @slot_offset = 0      # Scroll offset for time slots
       @events_by_date = {}
     end
 
@@ -74,9 +76,13 @@ module Timely
       when 'D', 'h', 'LEFT'
         @selected_date -= 1
         date_changed
-      when 'j', 'DOWN'
+      when 'DOWN'
+        move_slot_down
+      when 'UP'
+        move_slot_up
+      when 'j'
         select_next_event_on_day
-      when 'k', 'UP'
+      when 'k'
         select_prev_event_on_day
       when 'e'
         jump_to_next_event
@@ -105,6 +111,33 @@ module Timely
       when 'q'
         @running = false
       end
+    end
+
+    # --- Time slot navigation ---
+
+    def move_slot_down
+      work_start = @config.get('work_hours.start', 8) rescue 8
+      @selected_slot ||= work_start * 2
+      @selected_slot = [@selected_slot + 1, 47].min
+      available_rows = @panes[:mid].h - 2
+      # Scroll down if selection reaches bottom of visible area
+      if @selected_slot - @slot_offset >= available_rows
+        @slot_offset = @selected_slot - available_rows + 1
+      end
+      render_mid_pane
+      render_bottom_pane
+    end
+
+    def move_slot_up
+      work_start = @config.get('work_hours.start', 8) rescue 8
+      @selected_slot ||= work_start * 2
+      @selected_slot = [@selected_slot - 1, 0].max
+      # Scroll up if selection reaches top of visible area
+      if @selected_slot < @slot_offset
+        @slot_offset = @selected_slot
+      end
+      render_mid_pane
+      render_bottom_pane
     end
 
     # --- Date/event state changes ---
@@ -360,34 +393,45 @@ module Timely
         week_events << (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
       end
 
-      # Build half-hour time slots
+      # Build half-hour time slots with scroll offset
       work_start = @config.get('work_hours.start', 8) rescue 8
-      work_end = @config.get('work_hours.end', 17) rescue 17
       available_rows = @panes[:mid].h - 2
-      # Show half-hour slots starting from work_start
+      # Default slot offset to work_start if not set
+      @slot_offset ||= work_start * 2
+      # Clamp offset
+      @slot_offset = [[@slot_offset, 0].max, [48 - available_rows, 0].max].min
+
       slots = []
-      (work_start * 2...[work_start * 2 + available_rows, 48].min).each do |slot|
+      (@slot_offset...[@slot_offset + available_rows, 48].min).each do |slot|
         hour = slot / 2
         minute = (slot % 2) * 30
-        slots << [hour, minute]
+        slots << [hour, minute, slot]
       end
 
-      slots.each_with_index do |slot, row|
-        hour, minute = slot
+      slots.each_with_index do |(hour, minute, slot_idx), row|
+        is_slot_selected = (@selected_slot == slot_idx)
         row_bg = row.even? ? alt_bg_a : alt_bg_b
-        slot_start = hour * 3600 + minute * 60
 
-        # Time label
-        time_label = format("%02d:%02d ", hour, minute).fg(238)
+        # Time label: highlight if selected
+        time_label = format("%02d:%02d ", hour, minute)
+        time_label = is_slot_selected ? time_label.fg(255).b : time_label.fg(238)
 
         parts = [time_label]
         7.times do |col|
           day = week_start + col
           is_sel = (day == @selected_date)
-          cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
           sel_alt_a = @config.get('colors.selected_bg_a', 235)
           sel_alt_b = @config.get('colors.selected_bg_b', 234)
-          cell_bg = is_sel ? (row.even? ? sel_alt_a : sel_alt_b) : cell_bg_base
+          cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
+          if is_sel && is_slot_selected
+            cell_bg = 237  # Brightest: selected day + selected slot
+          elsif is_sel
+            cell_bg = row.even? ? sel_alt_a : sel_alt_b
+          elsif is_slot_selected
+            cell_bg = row.even? ? [alt_bg_a + 1, 236].min : [alt_bg_b + 1, 236].min
+          else
+            cell_bg = cell_bg_base
+          end
 
           # Find event at this time slot
           day_ts_start = Time.new(day.year, day.month, day.day, hour, minute, 0).to_i
@@ -568,7 +612,12 @@ module Timely
       title = @panes[:bottom].ask("Event title: ", "")
       return if title.nil? || title.strip.empty?
 
-      time_str = @panes[:bottom].ask("Start time (HH:MM, or 'all day'): ", "09:00")
+      default_time = if @selected_slot
+        format("%02d:%02d", @selected_slot / 2, (@selected_slot % 2) * 30)
+      else
+        "09:00"
+      end
+      time_str = @panes[:bottom].ask("Start time (HH:MM, or 'all day'): ", default_time)
       return if time_str.nil?
 
       all_day = (time_str.strip.downcase == 'all day')
@@ -801,7 +850,8 @@ module Timely
       help << "   w          Next week         W         Previous week"
       help << "   m          Next month        M         Previous month"
       help << "   y          Next year         Y         Previous year"
-      help << "   j/DOWN     Next event (day)  k/UP      Previous event (day)"
+      help << "   UP/DOWN    Select time slot   (scrolls at edges)"
+      help << "   j          Next event (day)  k         Previous event (day)"
       help << "   e          Next event (any)  E         Previous event (any)"
       help << "   t          Go to today       g         Go to date"
       help << ""
