@@ -830,6 +830,8 @@ module Timely
 
       sel = 0
 
+      is_color = ->(key) { key.start_with?('colors.') }
+
       build_popup = -> {
         popup.full_refresh
         inner_w = pw - 4
@@ -840,7 +842,13 @@ module Timely
 
         pref_keys.each_with_index do |(key, label, default), i|
           val = @config.get(key, default)
-          display = "  %-20s %s" % [label, val.to_s]
+          if is_color.call(key)
+            swatch = " \u2588\u2588".fg(val.to_i).bg(0) + " \u2588\u2588".bg(val.to_i)
+            val_str = val.to_s.rjust(3)
+            display = "  %-18s %s %s" % [label, val_str, swatch]
+          else
+            display = "  %-18s %s" % [label, val.to_s]
+          end
           if i == sel
             lines << display.fg(39).b
           else
@@ -849,7 +857,11 @@ module Timely
         end
 
         lines << ""
-        lines << "  " + "j/k:navigate  ENTER:edit  q/ESC:close".fg(245)
+        if is_color.call(pref_keys[sel][0])
+          lines << "  " + "j/k:navigate  h/l:adjust  H/L:x10  ENTER:type  q:close".fg(245)
+        else
+          lines << "  " + "j/k:navigate  ENTER:edit  q/ESC:close".fg(245)
+        end
 
         popup.text = lines.join("\n")
         popup.ix = 0
@@ -869,13 +881,44 @@ module Timely
         when 'j', 'DOWN'
           sel = (sel + 1) % pref_keys.length
           build_popup.call
+        when 'h', 'LEFT'
+          key, label, default = pref_keys[sel]
+          if is_color.call(key)
+            val = [(@config.get(key, default).to_i - 1), 0].max
+            @config.set(key, val)
+            @config.save
+            build_popup.call
+          end
+        when 'l', 'RIGHT'
+          key, label, default = pref_keys[sel]
+          if is_color.call(key)
+            val = [(@config.get(key, default).to_i + 1), 255].min
+            @config.set(key, val)
+            @config.save
+            build_popup.call
+          end
+        when 'H'
+          key, label, default = pref_keys[sel]
+          if is_color.call(key)
+            val = [(@config.get(key, default).to_i - 10), 0].max
+            @config.set(key, val)
+            @config.save
+            build_popup.call
+          end
+        when 'L'
+          key, label, default = pref_keys[sel]
+          if is_color.call(key)
+            val = [(@config.get(key, default).to_i + 10), 255].min
+            @config.set(key, val)
+            @config.save
+            build_popup.call
+          end
         when 'ENTER'
           key, label, default = pref_keys[sel]
           current = @config.get(key, default)
           result = popup.ask("#{label}: ", current.to_s)
           if result && !result.strip.empty?
             val = result.strip
-            # Convert to integer for numeric settings
             val = val.to_i if current.is_a?(Integer)
             @config.set(key, val)
             @config.save
