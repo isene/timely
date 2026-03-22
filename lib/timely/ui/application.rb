@@ -120,7 +120,7 @@ module Timely
       work_start = @config.get('work_hours.start', 8) rescue 8
       @selected_slot ||= work_start * 2
       @selected_slot = [@selected_slot + 1, 47].min
-      available_rows = @panes[:mid].h - 2
+      available_rows = @panes[:mid].h - 3
       # Scroll down if selection reaches bottom of visible area
       if @selected_slot - @slot_offset >= available_rows
         @slot_offset = @selected_slot - available_rows + 1
@@ -257,6 +257,14 @@ module Timely
       events = events_on_selected_day
       @selected_event_index = 0 if events.empty?
       @selected_event_index = events.length - 1 if @selected_event_index >= events.length
+
+      # Load weather (cached, background-safe)
+      lat = @config.get('location.lat', 59.9139)
+      lon = @config.get('location.lon', 10.7522)
+      @weather_forecast ||= {}
+      if @weather_forecast.empty?
+        @weather_forecast = Weather.fetch(lat, lon, @db) rescue {}
+      end
     end
 
     # --- Rendering ---
@@ -284,10 +292,15 @@ module Timely
       phase = Astronomy.moon_phase(@selected_date)
       moon = "  #{phase[:symbol]} #{phase[:phase_name]}"
 
-      # Visible planets summary
       lat = @config.get('location.lat', 59.9139)
       lon = @config.get('location.lon', 10.7522)
       tz = @config.get('timezone_offset', 1)
+
+      # Sunrise/sunset
+      sun = Astronomy.sun_times(@selected_date, lat, lon, tz)
+      sun_str = sun ? "  \u2600\u2191#{sun[:rise]} \u2600\u2193#{sun[:set]}" : ""
+
+      # Visible planets (cached per date)
       @_cached_planets_date ||= nil
       if @_cached_planets_date != @selected_date
         @_cached_planets = Astronomy.visible_planets(@selected_date, lat, lon, tz)
@@ -296,7 +309,7 @@ module Timely
       planets = @_cached_planets || []
       planet_str = planets.any? ? "  " + planets.map { |p| p[:symbol] }.join(" ") : ""
 
-      @panes[:info].text = title + date_str + moon + planet_str
+      @panes[:info].text = title + date_str + moon + sun_str + planet_str
       @panes[:info].refresh
     end
 
@@ -372,6 +385,18 @@ module Timely
 
       lines = []
 
+      # Weather row above day headers
+      weather_parts = [" " * time_col]
+      7.times do |i|
+        day = week_start + i
+        w_str = Weather.short_for_date(@weather_forecast || {}, day)
+        w_str ||= ""
+        pure_len = Rcurses.display_width(w_str)
+        pad = [day_col - pure_len, 0].max
+        weather_parts << w_str.fg(245) + " " * pad
+      end
+      lines << weather_parts.join(" ")
+
       # Column headers: time column + day headers
       header_parts = [" " * time_col]
       7.times do |i|
@@ -414,7 +439,7 @@ module Timely
 
       # Build half-hour time slots with scroll offset
       work_start = @config.get('work_hours.start', 8) rescue 8
-      available_rows = @panes[:mid].h - 2
+      available_rows = @panes[:mid].h - 3  # weather row + header + separator
       # Default slot offset to work_start if not set
       @slot_offset ||= work_start * 2
       # Clamp offset

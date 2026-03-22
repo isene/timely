@@ -26,6 +26,7 @@ require_relative 'timely/database'
 require_relative 'timely/config'
 require_relative 'timely/event'
 require_relative 'timely/astronomy'
+require_relative 'timely/weather'
 
 # UI components
 require_relative 'timely/ui/panes'

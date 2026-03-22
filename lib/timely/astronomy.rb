@@ -77,6 +77,29 @@ module Timely
       result
     end
 
+    # Sunrise/sunset for a given date and location.
+    # Returns { rise: "HH:MM", set: "HH:MM" }
+    def self.sun_times(date, lat = 59.9139, lon = 10.7522, tz = 1)
+      load_ephemeris
+      return nil unless defined?(Ephemeris)
+      eph = Ephemeris.new(date.strftime('%Y-%m-%d'), lat, lon, tz)
+      rise, _, sett = eph.rts(eph.sun[0], eph.sun[1])
+      { rise: rise.is_a?(String) ? rise[0..4] : rise.to_s,
+        set: sett.is_a?(String) ? sett[0..4] : sett.to_s }
+    rescue => e
+      nil
+    end
+
+    def self.load_ephemeris
+      return if defined?(Ephemeris)
+      begin
+        require 'ephemeris'
+      rescue LoadError
+        path = File.expand_path('~/Main/G/GIT-isene/ephemeris/lib/ephemeris.rb')
+        require path if File.exist?(path)
+      end
+    end
+
     PLANET_SYMBOLS = {
       'mercury' => "\u263F", 'venus' => "\u2640", 'mars' => "\u2642",
       'jupiter' => "\u2643", 'saturn' => "\u2644"
@@ -85,12 +108,7 @@ module Timely
     # Returns array of planet names visible at night for the given date/location.
     # A planet is "visible" if altitude > 5 degrees at any hour between 20:00-04:00.
     def self.visible_planets(date, lat = 59.9139, lon = 10.7522, tz = 1)
-      begin
-        require 'ephemeris'
-      rescue LoadError
-        ephemeris_path = File.expand_path('~/Main/G/GIT-isene/ephemeris/lib/ephemeris.rb')
-        require ephemeris_path if File.exist?(ephemeris_path)
-      end
+      load_ephemeris
       return [] unless defined?(Ephemeris)
 
       date_str = date.strftime('%Y-%m-%d')
