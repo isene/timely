@@ -14,24 +14,18 @@ module Timely
       def create_panes
         @panes = {}
 
-        # Row 1: info bar (1 line)
-        # Rows 2..top: month strip (~40% of remaining)
-        # Mid section: week view
-        # Bottom section: event details
-        # Last row: status line (1 line)
-
-        usable = @h - 2  # minus info bar and status line
-        top_h = (usable * 0.4).to_i
-        top_h = [top_h, 9].max
-        bottom_h = (usable * 0.25).to_i
+        # Layout: info(1) + top(months, fixed 10) + mid(week, flexible) + bottom(details) + status(1)
+        # Top pane: 1 blank row + 8 month rows + 1 blank row = 10
+        top_h = 10
+        bottom_h = (@h * 0.2).to_i
         bottom_h = [bottom_h, 5].max
-        mid_h = usable - top_h - bottom_h
+        mid_h = @h - 2 - top_h - bottom_h  # 2 = info + status
         mid_h = [mid_h, 4].max
 
-        # Adjust if total exceeds usable space
-        total = top_h + mid_h + bottom_h
-        if total > usable
-          mid_h = [usable - top_h - bottom_h, 4].max
+        # Adjust if overflow
+        if 2 + top_h + mid_h + bottom_h > @h
+          bottom_h = @h - 2 - top_h - mid_h
+          bottom_h = [bottom_h, 3].max
         end
 
         @panes[:info] = Rcurses::Pane.new(1, 1, @w, 1, 255, 235)

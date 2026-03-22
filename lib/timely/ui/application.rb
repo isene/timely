@@ -287,7 +287,7 @@ module Timely
       end
 
       max_lines = rendered.map(&:length).max || 0
-      combined_lines = []
+      combined_lines = [""]  # One row top padding
 
       max_lines.times do |row|
         parts = rendered.map do |month_lines|
@@ -300,6 +300,8 @@ module Timely
         combined_lines << " " + parts.join(" ")
       end
 
+      # One row bottom padding (no more)
+      combined_lines << "" if combined_lines.length < @panes[:top].h
       while combined_lines.length < @panes[:top].h
         combined_lines << ""
       end
@@ -308,21 +310,24 @@ module Timely
       @panes[:top].full_refresh
     end
 
-    # Mid pane: week view with events in columns
+    # Mid pane: week view with time column + day columns
     def render_mid_pane
       week_start = @selected_date - (@selected_date.cwday - 1)
-      col_width = (@w - 2) / 7
-      sel_bg = 234       # bg for selected day column
-      alt_bg_a = 233      # alternating row bg (dark)
-      alt_bg_b = 0        # alternating row bg (black/default)
+      time_col = 6  # "HH:MM " width
+      gap = 1       # gap between day columns
+      day_col = (@w - time_col - gap * 6) / 7  # 7 days, 6 gaps between them
+      day_col = [day_col, 8].max
+      sel_bg = 234
+      alt_bg_a = 233
+      alt_bg_b = 0
 
       lines = []
 
-      # Column headers
-      headers = []
+      # Column headers: time column + day headers
+      header_parts = [" " * time_col]
       7.times do |i|
         day = week_start + i
-        header = " #{day.strftime('%a')} #{day.day}"
+        header = "#{day.strftime('%a')} #{day.day}"
         is_sel = (day == @selected_date)
         is_today = (day == Date.today)
 
@@ -335,56 +340,76 @@ module Timely
         end
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
-        pad = [col_width - pure_len, 0].max
+        pad = [day_col - pure_len, 0].max
         padding = is_sel ? " ".bg(sel_bg) * pad : " " * pad
-        headers << header + padding
+        header_parts << header + padding
       end
-      lines << headers.join("")
+      lines << header_parts.join(" ")
       lines << ("\u2500" * @w).fg(238)
 
       # Gather events for each day
       week_events = []
-      max_events = 0
       7.times do |i|
         day = week_start + i
-        day_evts = (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
-        week_events << day_evts
-        max_events = day_evts.length if day_evts.length > max_events
+        week_events << (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
       end
 
+      # Build half-hour time slots
+      work_start = @config.get('work_hours.start', 8) rescue 8
+      work_end = @config.get('work_hours.end', 17) rescue 17
       available_rows = @panes[:mid].h - 2
-      available_rows = [available_rows, 1].max
-      rows_to_show = [max_events, available_rows].max
+      # Show half-hour slots starting from work_start
+      slots = []
+      (work_start * 2...[work_start * 2 + available_rows, 48].min).each do |slot|
+        hour = slot / 2
+        minute = (slot % 2) * 30
+        slots << [hour, minute]
+      end
 
-      rows_to_show.times do |row|
+      slots.each_with_index do |slot, row|
+        hour, minute = slot
         row_bg = row.even? ? alt_bg_a : alt_bg_b
-        parts = []
+        slot_start = hour * 3600 + minute * 60
+
+        # Time label
+        time_label = format("%02d:%02d ", hour, minute).fg(238)
+
+        parts = [time_label]
         7.times do |col|
           day = week_start + col
-          evt = week_events[col][row]
           is_sel = (day == @selected_date)
-          cell_bg = is_sel ? sel_bg : row_bg
+          cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
+          cell_bg = is_sel ? [sel_bg, cell_bg_base].max : cell_bg_base
+
+          # Find event at this time slot
+          day_ts_start = Time.new(day.year, day.month, day.day, hour, minute, 0).to_i
+          day_ts_end = day_ts_start + 1800  # 30 min slot
+
+          evt = week_events[col].find do |e|
+            es = e['start_time'].to_i
+            ee = e['end_time'].to_i
+            (es < day_ts_end && ee > day_ts_start) || e['all_day'].to_i == 1
+          end
+
+          # Find event index on this day for selection marker
+          evt_idx = evt ? week_events[col].index(evt) : nil
 
           if evt
-            marker = (is_sel && row == @selected_event_index) ? ">" : " "
-            time_str = evt['all_day'].to_i == 1 ? "All day" : Time.at(evt['start_time'].to_i).strftime('%H:%M')
+            marker = (is_sel && evt_idx == @selected_event_index) ? ">" : " "
             title = evt['title'] || "(No title)"
             color = evt['calendar_color'] || 39
-
-            entry = "#{marker}#{time_str} #{title}"
-            max_len = col_width - 1
-            entry = entry[0, max_len - 1] + "." if entry.length > max_len
-
-            cell = (is_sel && row == @selected_event_index) ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
+            entry = "#{marker}#{title}"
+            entry = entry[0, day_col - 1] + "." if entry.length > day_col
+            cell = (is_sel && evt_idx == @selected_event_index) ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
           else
             cell = " ".bg(cell_bg)
           end
 
           pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
-          pad = [col_width - pure_len, 0].max
+          pad = [day_col - pure_len, 0].max
           parts << cell + " ".bg(cell_bg) * pad
         end
-        lines << parts.join("")
+        lines << parts.join(" ")
       end
 
       while lines.length < @panes[:mid].h
