@@ -462,7 +462,7 @@ module Timely
         end
 
         header = if is_sel
-          header.b.u.fg(base_color).bg(sel_bg)
+          header.b.u.fg(base_color)
         elsif is_today
           header.b.u.fg(base_color)
         else
@@ -471,7 +471,7 @@ module Timely
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
         pad = [day_col - pure_len, 0].max
-        padding = is_sel ? " ".bg(sel_bg) * pad : " " * pad
+        padding = " " * pad
         header_parts << header + padding
       end
       lines << header_parts.join(" ")
