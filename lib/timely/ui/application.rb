@@ -191,6 +191,21 @@ module Timely
       @events_by_date[@selected_date] || []
     end
 
+    # Find the event at the currently selected time slot
+    def event_at_selected_slot
+      return nil unless @selected_slot
+      events = events_on_selected_day.sort_by { |e| e['start_time'].to_i }
+      hour = @selected_slot / 2
+      minute = (@selected_slot % 2) * 30
+      slot_start = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
+      slot_end = slot_start + 1800
+      events.find do |e|
+        es = e['start_time'].to_i
+        ee = e['end_time'].to_i
+        (es < slot_end && ee > slot_start) || e['all_day'].to_i == 1
+      end
+    end
+
     def select_next_event_on_day
       events = events_on_selected_day
       return if events.empty?
@@ -515,16 +530,14 @@ module Timely
             (es < day_ts_end && ee > day_ts_start) || e['all_day'].to_i == 1
           end
 
-          # Find event index on this day for selection marker
-          evt_idx = evt ? week_events[col].index(evt) : nil
-
           if evt
-            marker = (is_sel && evt_idx == @selected_event_index) ? ">" : " "
+            is_at_slot = is_sel && is_slot_selected
+            marker = is_at_slot ? ">" : " "
             title = evt['title'] || "(No title)"
             color = evt['calendar_color'] || 39
             entry = "#{marker}#{title}"
             entry = entry[0, day_col - 1] + "." if entry.length > day_col
-            cell = (is_sel && evt_idx == @selected_event_index) ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
+            cell = is_at_slot ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
           else
             cell = " ".bg(cell_bg)
           end
@@ -552,8 +565,8 @@ module Timely
       # Separator
       lines << ("-" * @w).fg(238)
 
-      if events.any? && @selected_event_index < events.length
-        evt = events[@selected_event_index]
+      evt = event_at_selected_slot
+      if evt
         color = evt['calendar_color'] || 39
 
         # Title
@@ -825,11 +838,8 @@ module Timely
     end
 
     def edit_event
-      events = events_on_selected_day
-      return show_feedback("No event to edit", 245) if events.empty?
-
-      evt = events[@selected_event_index]
-      return show_feedback("No event selected", 245) unless evt
+      evt = event_at_selected_slot
+      return show_feedback("No event at this time slot", 245) unless evt
 
       blank_bottom(" Edit Event".b)
       new_title = bottom_ask(" Title: ", evt['title'] || "")
@@ -862,17 +872,14 @@ module Timely
 
     def delete_event
       events = events_on_selected_day
-      return show_feedback("No event to delete", 245) if events.empty?
-
-      evt = events[@selected_event_index]
-      return show_feedback("No event selected", 245) unless evt
+      evt = event_at_selected_slot
+      return show_feedback("No event at this time slot", 245) unless evt
 
       blank_bottom(" Delete Event".b)
       confirm = bottom_ask(" Delete '#{evt['title']}'? (y/n): ", "")
       return unless confirm&.strip&.downcase == 'y'
 
       @db.delete_event(evt['id'])
-      @selected_event_index = 0
 
       load_events_for_range
       render_all
@@ -880,11 +887,8 @@ module Timely
     end
 
     def accept_invite
-      events = events_on_selected_day
-      return show_feedback("No event to accept", 245) if events.empty?
-
-      evt = events[@selected_event_index]
-      return show_feedback("No event selected", 245) unless evt
+      evt = event_at_selected_slot
+      return show_feedback("No event at this time slot", 245) unless evt
 
       @db.save_event(
         id: evt['id'],
