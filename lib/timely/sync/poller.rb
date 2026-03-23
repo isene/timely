@@ -21,14 +21,15 @@ module Timely
             rescue => e
               File.open('/tmp/timely-sync.log', 'a') { |f| f.puts "#{Time.now} Sync error: #{e.message}" }
             end
-            sleep interval
+            # Sleep in short intervals so we can exit quickly
+            (interval / 2).times { break unless @running; sleep 2 }
           end
         end
       end
 
       def stop
         @running = false
-        @thread&.join(2)
+        @thread&.kill
       end
 
       def needs_refresh?
