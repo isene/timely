@@ -200,9 +200,10 @@ module Timely
       slot_start = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
       slot_end = slot_start + 1800
       events.find do |e|
+        next if e['all_day'].to_i == 1
         es = e['start_time'].to_i
         ee = e['end_time'].to_i
-        (es < slot_end && ee > slot_start) || e['all_day'].to_i == 1
+        es < slot_end && ee > slot_start
       end
     end
 
@@ -476,16 +477,47 @@ module Timely
       lines << header_parts.join(" ")
       lines << ("-" * @w).fg(238)
 
-      # Gather events for each day
+      # Gather events for each day, split all-day from timed
       week_events = []
+      week_allday = []
       7.times do |i|
         day = week_start + i
-        week_events << (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
+        all = (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
+        week_allday << all.select { |e| e['all_day'].to_i == 1 }
+        week_events << all.reject { |e| e['all_day'].to_i == 1 }
+      end
+
+      # All-day event row(s) above time grid
+      max_allday = week_allday.map(&:size).max || 0
+      if max_allday > 0
+        max_allday.times do |row|
+          parts = [" " * time_col]
+          7.times do |col|
+            evt = week_allday[col][row]
+            day = week_start + col
+            is_sel = (day == @selected_date)
+            if evt
+              title = evt['title'] || "(No title)"
+              color = evt['calendar_color'] || 39
+              entry = title[0, day_col - 1]
+              entry = entry.length < title.length ? entry + "." : entry
+              cell = is_sel ? entry.fg(color).b : entry.fg(color)
+            else
+              cell = " "
+            end
+            pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
+            pad = [day_col - pure_len, 0].max
+            parts << cell + " " * pad
+          end
+          lines << parts.join(" ")
+        end
+        lines << ("-" * @w).fg(238)
       end
 
       # Build half-hour time slots with scroll offset
       work_start = @config.get('work_hours.start', 8) rescue 8
-      available_rows = @panes[:mid].h - 3  # weather row + header + separator
+      extra_rows = max_allday > 0 ? max_allday + 1 : 0  # allday rows + separator
+      available_rows = @panes[:mid].h - 3 - extra_rows
       # Default slot offset to work_start if not set
       @slot_offset ||= work_start * 2
       # Clamp offset
@@ -528,7 +560,7 @@ module Timely
           evt = week_events[col].find do |e|
             es = e['start_time'].to_i
             ee = e['end_time'].to_i
-            (es < day_ts_end && ee > day_ts_start) || e['all_day'].to_i == 1
+            es < day_ts_end && ee > day_ts_start
           end
 
           if evt
