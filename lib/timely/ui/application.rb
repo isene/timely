@@ -432,7 +432,14 @@ module Timely
     # Status bar: bottom row with key hints
     def render_status_bar
       keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  S:Sync  C:Cal  P:Prefs  ?:Help  q:Quit"
-      @panes[:status].text = " " + keys
+      if @syncing
+        sync_indicator = " Syncing...".fg(226)
+        pad = @w - keys.length - 12
+        pad = [pad, 1].max
+        @panes[:status].text = " " + keys + " " * pad + sync_indicator
+      else
+        @panes[:status].text = " " + keys
+      end
       @panes[:status].refresh
     end
 
@@ -678,51 +685,59 @@ module Timely
       evt = event_at_selected_slot
       if evt
         color = evt['calendar_color'] || 39
+        max_lines = 50  # Allow scrolling for long descriptions
 
-        # Title
-        lines << " #{evt['title'] || '(No title)'}".fg(color).b
-
-        # Date and time
+        # Line 1: Title + time on same line
+        title = evt['title'] || '(No title)'
         if evt['all_day'].to_i == 1
-          lines << " #{@selected_date.strftime('%a %Y-%m-%d')}  All day".fg(252)
+          time_info = @selected_date.strftime('%a %Y-%m-%d') + "  All day"
         else
           st = Time.at(evt['start_time'].to_i)
-          time_str = " #{st.strftime('%a %Y-%m-%d  %H:%M')}"
-          if evt['end_time']
-            et = Time.at(evt['end_time'].to_i)
-            time_str += " - #{et.strftime('%H:%M')}"
-          end
-          lines << time_str.fg(252)
+          time_info = st.strftime('%a %Y-%m-%d  %H:%M')
+          time_info += " - #{Time.at(evt['end_time'].to_i).strftime('%H:%M')}" if evt['end_time']
         end
+        lines << " #{title}".fg(color).b + "  #{time_info}".fg(252)
 
-        # Location
+        # Line 2: Location + Organizer + Calendar on same line
+        details = []
         if evt['location'] && !evt['location'].to_s.strip.empty?
-          loc = evt['location'].to_s
-          loc = loc[0, @w - 4] if loc.length > @w - 4
-          lines << " Location: #{loc}".fg(245)
+          details << "Location: #{evt['location'].to_s.strip}"
         end
-
-        # Organizer
         if evt['organizer'] && !evt['organizer'].to_s.strip.empty?
-          lines << " Organizer: #{evt['organizer']}".fg(245)
+          details << "Organizer: #{evt['organizer']}"
         end
+        cal_name = evt['calendar_name'] || 'Unknown'
+        details << "Calendar: #{cal_name}"
+        detail_line = " " + details.join("  |  ")
+        detail_line = detail_line[0, @w - 2] if detail_line.length > @w - 2
+        lines << detail_line.fg(245)
 
-        # Status
+        # Line 3: Status (if relevant)
         status_parts = []
         status_parts << "Status: #{evt['status']}" if evt['status']
         status_parts << "My status: #{evt['my_status']}" if evt['my_status']
         lines << " #{status_parts.join('  |  ')}".fg(245) unless status_parts.empty?
 
-        # Calendar name
-        cal_name = evt['calendar_name'] || 'Unknown'
-        lines << " Calendar: #{cal_name}".fg(240)
-
-        # Description (truncated)
+        # Remaining lines: Description (wrapped to pane width)
         if evt['description'] && !evt['description'].to_s.strip.empty?
-          desc = evt['description'].to_s.gsub("\n", " ").strip
-          desc = desc[0, @w - 4] if desc.length > @w - 4
-          lines << ""
-          lines << " #{desc}".fg(248)
+          desc = evt['description'].to_s.gsub(/\r?\n/, " ").strip
+          remaining = max_lines - lines.size
+          if remaining > 1
+            lines << ""
+            # Word-wrap description to fit remaining lines
+            words = desc.split(' ')
+            line = " "
+            words.each do |word|
+              if line.length + word.length + 1 > @w - 2
+                lines << line.fg(248)
+                break if lines.size >= max_lines
+                line = " " + word
+              else
+                line += (line == " " ? "" : " ") + word
+              end
+            end
+            lines << line.fg(248) if lines.size < max_lines && line.strip.length > 0
+          end
         end
 
       else
@@ -1000,6 +1015,8 @@ module Timely
       evt = event_at_selected_slot
       return show_feedback("No event at this time slot", 245) unless evt
 
+      show_feedback("Accepting '#{evt['title']}'...", 226)
+
       @db.save_event(
         id: evt['id'],
         calendar_id: evt['calendar_id'],
@@ -1160,7 +1177,8 @@ module Timely
         return
       end
 
-      show_feedback("Syncing #{calendars.size} calendar(s) in background...", 226)
+      @syncing = true
+      render_status_bar
 
       Thread.new do
         begin
@@ -1220,8 +1238,10 @@ module Timely
         else
           show_feedback("Sync complete. #{total} new event(s).", 156)
         end
+        @syncing = false
         render_all
         rescue => e
+          @syncing = false
           File.open('/tmp/timely-sync.log', 'a') { |f| f.puts "#{Time.now} Sync thread error: #{e.message}\n#{e.backtrace.first(5).join("\n")}" }
           show_feedback("Sync error: #{e.message}", 196)
         end
