@@ -35,6 +35,14 @@ module Timely
         'google' => {
           'safe_dir' => '/home/.safe/mail',
           'sync_interval' => 300
+        },
+        'outlook' => {
+          'client_id' => '',
+          'tenant_id' => 'common'
+        },
+        'notifications' => {
+          'enabled' => true,
+          'default_alarm' => 15
         }
       }
       save_config(default)

@@ -58,6 +58,8 @@ module Timely
             load_events_for_range
             render_all
           end
+          # Check notifications on idle (runs inexpensively)
+          Notifications.check_and_notify(@db) rescue nil
         end
         break unless @running
       end
@@ -138,6 +140,8 @@ module Timely
         import_ics_file
       when 'G'
         setup_google_calendar
+      when 'O'
+        setup_outlook_calendar
       when 'S'
         manual_sync
       when 'C'
@@ -433,7 +437,7 @@ module Timely
 
     # Status bar: bottom row with key hints
     def render_status_bar
-      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  S:Sync  C:Cal  P:Prefs  ?:Help  q:Quit"
+      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  O:Outlook  S:Sync  C:Cal  P:Prefs  ?:Help  q:Quit"
       if @syncing
         sync_indicator = " Syncing...".fg(226)
         pad = @w - keys.length - 12
@@ -1140,8 +1144,9 @@ module Timely
         metadata: evt['metadata']
       )
 
-      # Push RSVP to Google Calendar if applicable
+      # Push RSVP to the original calendar source
       push_rsvp_to_google(evt)
+      push_rsvp_to_outlook(evt)
 
       load_events_for_range
       render_all
@@ -1168,6 +1173,23 @@ module Timely
         all_day: evt['all_day'].to_i == 1,
         attendees: evt['attendees']
       })
+    rescue => e
+      # Silently fail; local status is already updated
+      nil
+    end
+
+    def push_rsvp_to_outlook(evt)
+      cal = @db.get_calendars(false).find { |c| c['id'] == evt['calendar_id'] }
+      return unless cal && cal['source_type'] == 'outlook' && evt['external_id']
+
+      config = cal['source_config']
+      config = JSON.parse(config) if config.is_a?(String)
+      return unless config.is_a?(Hash)
+
+      outlook = Sources::Outlook.new(config)
+      return unless outlook.refresh_access_token
+
+      outlook.respond_to_event(evt['external_id'], 'accepted')
     rescue => e
       # Silently fail; local status is already updated
       nil
@@ -1272,11 +1294,146 @@ module Timely
       end
     end
 
-    def manual_sync
-      calendars = @db.get_calendars.select { |c| c['source_type'] == 'google' }
+    # --- Outlook Calendar ---
 
+    def setup_outlook_calendar
+      blank_bottom(" Outlook/365 Calendar Setup".b.fg(33))
+
+      # Get client_id (from Azure app registration)
+      default_client_id = @config.get('outlook.client_id', '')
+      client_id = bottom_ask(" Azure App client_id: ", default_client_id)
+      return cancel_create if client_id.nil? || client_id.strip.empty?
+      client_id = client_id.strip
+
+      # Get tenant_id (optional, defaults to 'common')
+      default_tenant = @config.get('outlook.tenant_id', 'common')
+      tenant_id = bottom_ask(" Tenant ID (Enter for '#{default_tenant}'): ", default_tenant)
+      tenant_id = (tenant_id || default_tenant).strip
+      tenant_id = 'common' if tenant_id.empty?
+
+      # Save config for next time
+      @config.set('outlook.client_id', client_id)
+      @config.set('outlook.tenant_id', tenant_id)
+      @config.save
+
+      show_feedback("Starting device code authentication...", 226)
+
+      outlook = Sources::Outlook.new({
+        'client_id' => client_id,
+        'tenant_id' => tenant_id
+      })
+
+      auth = outlook.start_device_auth
+      unless auth
+        show_feedback("Device auth failed: #{outlook.last_error}", 196)
+        return
+      end
+
+      # Show user the code and URL
+      user_code = auth['user_code']
+      verify_url = auth['verification_uri'] || 'https://microsoft.com/devicelogin'
+
+      blank_bottom(" Outlook Device Login".b.fg(33))
+      lines = [("-" * @w).fg(238)]
+      lines << ""
+      lines << " Go to: #{verify_url}".fg(51)
+      lines << " Enter code: #{user_code}".fg(226).b
+      lines << ""
+      lines << " Waiting for authorization...".fg(245)
+      while lines.length < @panes[:bottom].h
+        lines << ""
+      end
+      @panes[:bottom].text = lines.join("\n")
+      @panes[:bottom].full_refresh
+
+      # Poll for token in a thread so we can show progress
+      token_result = nil
+      auth_thread = Thread.new do
+        token_result = outlook.poll_for_token(auth['device_code'])
+      end
+
+      # Wait for the auth thread (with a timeout of 5 minutes)
+      auth_thread.join(300)
+
+      unless token_result
+        show_feedback("Auth failed or timed out: #{outlook.last_error}", 196)
+        auth_thread.kill if auth_thread.alive?
+        return
+      end
+
+      show_feedback("Authenticated. Fetching calendars...", 226)
+
+      # List calendars
+      calendars = outlook.list_calendars
       if calendars.empty?
-        show_feedback("No Google calendars configured. Press G to set up.", 245)
+        show_feedback("No Outlook calendars found: #{outlook.last_error}", 196)
+        return
+      end
+
+      # Let user pick calendars
+      cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c[:name]}" }.join("  ")
+      blank_bottom(" Found #{calendars.size} Outlook calendar(s)".fg(33).b)
+      pick = bottom_ask(" Add which? (#{cal_list}, 'all', or ESC): ", "all")
+      return cancel_create if pick.nil?
+
+      selected = if pick.strip.downcase == 'all'
+        calendars
+      else
+        indices = pick.strip.split(',').map { |s| s.strip.to_i - 1 }
+        indices.filter_map { |i| calendars[i] if i >= 0 && i < calendars.size }
+      end
+
+      selected.each do |ocal|
+        # Check if already added
+        existing = @db.get_calendars(false).find { |c|
+          config = c['source_config']
+          config = JSON.parse(config) if config.is_a?(String)
+          config.is_a?(Hash) && config['outlook_calendar_id'] == ocal[:id]
+        }
+        next if existing
+
+        @db.save_calendar(
+          name: ocal[:name],
+          source_type: 'outlook',
+          source_config: {
+            'client_id' => client_id,
+            'tenant_id' => tenant_id,
+            'access_token' => token_result[:access_token],
+            'refresh_token' => token_result[:refresh_token],
+            'outlook_calendar_id' => ocal[:id]
+          },
+          color: outlook_color_to_256(ocal[:color]),
+          enabled: true
+        )
+      end
+
+      manual_sync
+      show_feedback("Added #{selected.size} Outlook calendar(s). Syncing...", 156)
+    end
+
+    def outlook_color_to_256(color_name)
+      return 33 unless color_name
+      case color_name.to_s.downcase
+      when 'blue', 'lightblue' then 33
+      when 'green', 'lightgreen' then 35
+      when 'purple', 'lightpurple', 'grape' then 134
+      when 'red', 'lightred', 'cranberry' then 167
+      when 'yellow', 'lightyellow', 'pumpkin' then 214
+      when 'teal', 'lightteal' then 37
+      when 'orange', 'lightorange' then 208
+      when 'pink', 'lightpink' then 205
+      when 'gray', 'lightgray', 'grey' then 245
+      when 'auto' then 33
+      else 33
+      end
+    end
+
+    def manual_sync
+      google_cals = @db.get_calendars.select { |c| c['source_type'] == 'google' }
+      outlook_cals = @db.get_calendars.select { |c| c['source_type'] == 'outlook' }
+
+      if google_cals.empty? && outlook_cals.empty?
+        show_feedback("No calendars configured. Press G (Google) or O (Outlook) to set up.", 245)
         return
       end
 
@@ -1287,16 +1444,16 @@ module Timely
         begin
         total = 0
         errors = []
-        # Group calendars by email to reuse auth tokens
-        by_email = calendars.group_by do |cal|
+        now = Time.now
+        time_min = (now - 30 * 86400).to_i   # 30 days back
+        time_max = (now + 60 * 86400).to_i    # 60 days forward
+
+        # --- Google sync ---
+        by_email = google_cals.group_by do |cal|
           config = cal['source_config']
           config = JSON.parse(config) if config.is_a?(String)
           config.is_a?(Hash) ? config['email'] : nil
         end
-
-        now = Time.now
-        time_min = (now - 30 * 86400).to_i   # 30 days back
-        time_max = (now + 60 * 86400).to_i    # 60 days forward
 
         by_email.each do |email, cals|
           next unless email
@@ -1332,6 +1489,47 @@ module Timely
             end
             @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
           end
+        end
+
+        # --- Outlook sync ---
+        outlook_cals.each do |cal|
+          cfg = cal['source_config']
+          cfg = JSON.parse(cfg) if cfg.is_a?(String)
+          next unless cfg.is_a?(Hash)
+
+          outlook = Sources::Outlook.new(cfg)
+          unless outlook.refresh_access_token
+            errors << "#{cal['name']}: #{outlook.last_error || 'token failed'}"
+            next
+          end
+
+          events = outlook.fetch_events(time_min, time_max)
+          unless events
+            errors << "#{cal['name']}: #{outlook.last_error || 'fetch failed'}"
+            next
+          end
+
+          events.each do |evt|
+            existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
+            if existing
+              @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
+            elsif @db.event_duplicate?(evt[:title], evt[:start_time])
+              # Skip
+            else
+              @db.save_event(calendar_id: cal['id'], **evt)
+              total += 1
+            end
+          end
+
+          # Persist refreshed tokens
+          new_config = cfg.merge(
+            'access_token' => outlook.instance_variable_get(:@access_token),
+            'refresh_token' => outlook.instance_variable_get(:@refresh_token)
+          )
+          @db.db.execute(
+            "UPDATE calendars SET source_config = ?, last_synced_at = ? WHERE id = ?",
+            [JSON.generate(new_config), Time.now.to_i, cal['id']]
+          )
         end
 
         # Signal UI to refresh
@@ -1676,7 +1874,7 @@ module Timely
       rows, cols = IO.console.winsize
       pw = [cols - 16, 68].min
       pw = [pw, 56].max
-      ph = 22
+      ph = 24
       px = (cols - pw) / 2
       py = (rows - ph) / 2
 
@@ -1709,8 +1907,9 @@ module Timely
       help << "  #{k['v']}        #{d['View event details (scrollable popup)']}"
       help << "  #{k['r']}        #{d['Reply via Heathrow']}"
       help << sep
-      help << "  #{k['i']}  #{d['Import ICS']}   #{k['G']}  #{d['Google setup']}   #{k['S']}  #{d['Sync now']}"
-      help << "  #{k['C']}  #{d['Calendars']}    #{k['P']}  #{d['Preferences']}    #{k['q']}  #{d['Quit']}"
+      help << "  #{k['i']}  #{d['Import ICS']}   #{k['G']}  #{d['Google setup']}   #{k['O']}  #{d['Outlook setup']}"
+      help << "  #{k['S']}  #{d['Sync now']}     #{k['C']}  #{d['Calendars']}      #{k['P']}  #{d['Preferences']}"
+      help << "  #{k['q']}  #{d['Quit']}"
       help << ""
       help << "  " + "Press any key to close...".fg(245)
 

@@ -31,7 +31,9 @@ require_relative 'timely/weather'
 # Sources and sync
 require_relative 'timely/sources/ics_file'
 require_relative 'timely/sources/google'
+require_relative 'timely/sources/outlook'
 require_relative 'timely/sync/poller'
+require_relative 'timely/notifications'
 
 # UI components
 require_relative 'timely/ui/panes'

@@ -43,12 +43,16 @@ module Timely
       private
 
       def sync_cycle
-        calendars = @db.get_calendars.select { |c| c['source_type'] == 'google' }
-        return if calendars.empty?
+        # Sync Google calendars
+        google_calendars = @db.get_calendars.select { |c| c['source_type'] == 'google' }
+        google_calendars.each { |cal| sync_calendar(cal) }
 
-        calendars.each do |cal|
-          sync_calendar(cal)
-        end
+        # Sync Outlook calendars
+        outlook_calendars = @db.get_calendars.select { |c| c['source_type'] == 'outlook' }
+        outlook_calendars.each { |cal| sync_outlook_calendar(cal) }
+
+        # Check for upcoming event notifications
+        Notifications.check_and_notify(@db)
       end
 
       def sync_calendar(cal)
@@ -116,6 +120,76 @@ module Timely
 
         # Update last_synced
         @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
+        @needs_refresh = true if changed
+      end
+
+      def sync_outlook_calendar(cal)
+        config = cal['source_config']
+        config = JSON.parse(config) if config.is_a?(String)
+        return unless config.is_a?(Hash)
+
+        outlook = Sources::Outlook.new(config)
+        return unless outlook.refresh_access_token
+
+        # Fetch events for a 6-month window
+        now = Time.now
+        time_min = (now - 90 * 86400).to_i
+        time_max = (now + 90 * 86400).to_i
+
+        events = outlook.fetch_events(time_min, time_max)
+        return unless events
+
+        changed = false
+        events.each do |evt|
+          existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
+          if existing
+            @db.save_event(
+              id: existing['id'],
+              calendar_id: cal['id'],
+              external_id: evt[:external_id],
+              title: evt[:title],
+              description: evt[:description],
+              location: evt[:location],
+              start_time: evt[:start_time],
+              end_time: evt[:end_time],
+              all_day: evt[:all_day],
+              status: evt[:status],
+              organizer: evt[:organizer],
+              attendees: evt[:attendees],
+              my_status: evt[:my_status],
+              metadata: evt[:metadata]
+            )
+          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
+            # Already imported via ICS or another source; skip
+          else
+            @db.save_event(
+              calendar_id: cal['id'],
+              external_id: evt[:external_id],
+              title: evt[:title],
+              description: evt[:description],
+              location: evt[:location],
+              start_time: evt[:start_time],
+              end_time: evt[:end_time],
+              all_day: evt[:all_day],
+              status: evt[:status],
+              organizer: evt[:organizer],
+              attendees: evt[:attendees],
+              my_status: evt[:my_status],
+              metadata: evt[:metadata]
+            )
+            changed = true
+          end
+        end
+
+        # Persist refreshed tokens back to source_config
+        new_config = config.merge(
+          'access_token' => outlook.instance_variable_get(:@access_token),
+          'refresh_token' => outlook.instance_variable_get(:@refresh_token)
+        )
+        @db.db.execute(
+          "UPDATE calendars SET source_config = ?, last_synced_at = ? WHERE id = ?",
+          [JSON.generate(new_config), Time.now.to_i, cal['id']]
+        )
         @needs_refresh = true if changed
       end
     end
