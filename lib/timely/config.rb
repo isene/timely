@@ -33,7 +33,7 @@ module Timely
         },
         'week_starts_on' => 'monday',
         'google' => {
-          'safe_dir' => '/home/.safe/mail',
+          'safe_dir' => '~/.config/timely/credentials',
           'sync_interval' => 300
         },
         'outlook' => {

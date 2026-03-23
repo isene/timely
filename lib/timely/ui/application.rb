@@ -1239,7 +1239,7 @@ module Timely
       config = JSON.parse(config) if config.is_a?(String)
       return unless config.is_a?(Hash)
 
-      google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '/home/.safe/mail')
+      google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '~/.config/timely/credentials')
       return unless google.get_access_token
 
       gcal_id = config['google_calendar_id'] || config['email']
@@ -1303,7 +1303,7 @@ module Timely
       return cancel_create if email.nil? || email.strip.empty?
       email = email.strip
 
-      safe_dir = @config.get('google.safe_dir', '/home/.safe/mail')
+      safe_dir = @config.get('google.safe_dir', '~/.config/timely/credentials')
 
       show_feedback("Connecting to Google Calendar...", 226)
 
@@ -1523,7 +1523,7 @@ module Timely
           next unless email
           config = cals.first['source_config']
           config = JSON.parse(config) if config.is_a?(String)
-          google = Sources::Google.new(email, safe_dir: config['safe_dir'] || '/home/.safe/mail')
+          google = Sources::Google.new(email, safe_dir: config['safe_dir'] || '~/.config/timely/credentials')
           unless google.get_access_token
             errors << "#{email}: #{google.last_error || 'token failed'}"
             next

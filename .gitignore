@@ -1,0 +1,39 @@
+# Timely data
+~/.timely/
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+token.json
+*_secret*
+*_token*
+
+# Ruby
+*.gem
+*.rbc
+/pkg/
+/tmp/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+CLAUDE.md
+.claude/
+
+# Logs
+*.log

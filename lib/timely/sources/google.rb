@@ -11,9 +11,9 @@ module Timely
 
       attr_reader :last_error
 
-      def initialize(email, safe_dir: '/home/.safe/mail')
+      def initialize(email, safe_dir: '~/.config/timely/credentials')
         @email = email
-        @safe_dir = safe_dir
+        @safe_dir = File.expand_path(safe_dir)
         @access_token = nil
         @token_expires_at = 0
         @last_error = nil

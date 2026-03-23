@@ -61,7 +61,7 @@ module Timely
         return unless config.is_a?(Hash)
 
         email = config['email']
-        safe_dir = config['safe_dir'] || '/home/.safe/mail'
+        safe_dir = config['safe_dir'] || '~/.config/timely/credentials'
         google = Sources::Google.new(email, safe_dir: safe_dir)
 
         return unless google.get_access_token
