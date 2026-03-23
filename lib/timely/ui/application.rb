@@ -143,15 +143,35 @@ module Timely
 
     # --- Time slot navigation ---
 
+    # @selected_slot: 0-47 = time slots (00:00-23:30)
+    #                 negative = all-day event rows (-1 = first, -2 = second...)
+    def allday_count
+      events = events_on_selected_day
+      events.count { |e| e['all_day'].to_i == 1 }
+    end
+
+    def min_slot
+      n = allday_count
+      n > 0 ? -n : 0
+    end
+
     def move_slot_down
       work_start = @config.get('work_hours.start', 8) rescue 8
       @selected_slot ||= work_start * 2
-      @selected_slot = @selected_slot >= 47 ? 0 : @selected_slot + 1
-      available_rows = @panes[:mid].h - 3
-      if @selected_slot == 0
+      if @selected_slot >= 47
+        @selected_slot = min_slot
         @slot_offset = 0
-      elsif @selected_slot - @slot_offset >= available_rows
-        @slot_offset = @selected_slot - available_rows + 1
+      else
+        @selected_slot += 1
+      end
+      # Scroll time area
+      if @selected_slot >= 0
+        allday_rows = allday_count > 0 ? allday_count + 1 : 0
+        available_rows = @panes[:mid].h - 3 - allday_rows
+        available_rows = [available_rows, 1].max
+        if @selected_slot - @slot_offset >= available_rows
+          @slot_offset = @selected_slot - available_rows + 1
+        end
       end
       render_mid_pane
       render_bottom_pane
@@ -160,11 +180,16 @@ module Timely
     def move_slot_up
       work_start = @config.get('work_hours.start', 8) rescue 8
       @selected_slot ||= work_start * 2
-      @selected_slot = @selected_slot <= 0 ? 47 : @selected_slot - 1
-      available_rows = @panes[:mid].h - 3
-      if @selected_slot == 47
+      if @selected_slot <= min_slot
+        @selected_slot = 47
+        allday_rows = allday_count > 0 ? allday_count + 1 : 0
+        available_rows = @panes[:mid].h - 3 - allday_rows
+        available_rows = [available_rows, 1].max
         @slot_offset = [48 - available_rows, 0].max
-      elsif @selected_slot < @slot_offset
+      else
+        @selected_slot -= 1
+      end
+      if @selected_slot >= 0 && @selected_slot < @slot_offset
         @slot_offset = @selected_slot
       end
       render_mid_pane
@@ -197,6 +222,14 @@ module Timely
     def event_at_selected_slot
       return nil unless @selected_slot
       events = events_on_selected_day.sort_by { |e| e['start_time'].to_i }
+
+      if @selected_slot < 0
+        # Negative slot = all-day event row
+        allday = events.select { |e| e['all_day'].to_i == 1 }
+        idx = @selected_slot.abs - 1
+        return allday[idx]
+      end
+
       hour = @selected_slot / 2
       minute = (@selected_slot % 2) * 30
       slot_start = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
@@ -495,20 +528,25 @@ module Timely
       max_allday = week_allday.map(&:size).max || 0
       if max_allday > 0
         max_allday.times do |row|
-          parts = [" " * time_col]
+          allday_slot = -(row + 1)  # -1, -2, ...
+          is_row_selected = (@selected_slot == allday_slot)
+          parts = [is_row_selected ? "  All".fg(255).b + " " : " " * time_col]
           sel_ad_bg = @config.get('colors.selected_bg_a', 235)
+          slot_bg = @config.get('colors.slot_selected_bg', 237)
           7.times do |col|
             evt = week_allday[col][row]
             day = week_start + col
             is_sel = (day == @selected_date)
+            is_at = is_sel && is_row_selected
+            cell_bg = is_at ? slot_bg : (is_sel ? sel_ad_bg : nil)
             if evt
               title = evt['title'] || "(No title)"
               color = evt['calendar_color'] || 39
-              entry = title[0, day_col - 1]
-              entry = entry.length < title.length ? entry + "." : entry
-              cell = is_sel ? entry.fg(color).b.bg(sel_ad_bg) : entry.fg(color)
+              marker = is_at ? ">" : " "
+              entry = "#{marker}#{title}"[0, day_col - 1]
+              cell = cell_bg ? entry.fg(color).b.bg(cell_bg) : entry.fg(color)
             else
-              cell = is_sel ? " ".bg(sel_ad_bg) : " "
+              cell = cell_bg ? " ".bg(cell_bg) : " "
             end
             pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
             pad = [day_col - pure_len, 0].max
