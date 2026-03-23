@@ -464,8 +464,9 @@ module Timely
           245
         end
 
+        sel_hdr_bg = @config.get('colors.selected_bg_a', 235)
         header = if is_sel
-          header.b.u.fg(base_color)
+          header.b.u.fg(base_color).bg(sel_hdr_bg)
         elsif is_today
           header.b.u.fg(base_color)
         else
@@ -474,7 +475,7 @@ module Timely
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
         pad = [day_col - pure_len, 0].max
-        padding = " " * pad
+        padding = is_sel ? " ".bg(sel_hdr_bg) * pad : " " * pad
         header_parts << header + padding
       end
       lines << header_parts.join(" ")
@@ -495,6 +496,7 @@ module Timely
       if max_allday > 0
         max_allday.times do |row|
           parts = [" " * time_col]
+          sel_ad_bg = @config.get('colors.selected_bg_a', 235)
           7.times do |col|
             evt = week_allday[col][row]
             day = week_start + col
@@ -504,13 +506,14 @@ module Timely
               color = evt['calendar_color'] || 39
               entry = title[0, day_col - 1]
               entry = entry.length < title.length ? entry + "." : entry
-              cell = is_sel ? entry.fg(color).b : entry.fg(color)
+              cell = is_sel ? entry.fg(color).b.bg(sel_ad_bg) : entry.fg(color)
             else
-              cell = " "
+              cell = is_sel ? " ".bg(sel_ad_bg) : " "
             end
             pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
             pad = [day_col - pure_len, 0].max
-            parts << cell + " " * pad
+            pad_str = is_sel ? " ".bg(sel_ad_bg) * pad : " " * pad
+            parts << cell + pad_str
           end
           lines << parts.join(" ")
         end
