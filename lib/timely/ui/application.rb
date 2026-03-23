@@ -445,6 +445,13 @@ module Timely
         create_panes
       end
 
+      # Set terminal window title
+      events = events_on_selected_day
+      evt_count = events.size
+      title_str = "Timely: #{@selected_date.strftime('%a %b %d, %Y')}"
+      title_str += " (#{evt_count} event#{evt_count == 1 ? '' : 's'})" if evt_count > 0
+      $stdout.print "\033]0;#{title_str}\007"
+
       render_info_bar
       render_top_pane
       render_mid_pane

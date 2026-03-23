@@ -1,13 +1,13 @@
 require_relative 'lib/timely/version'
 
 Gem::Specification.new do |spec|
-  spec.name          = 'timely'
+  spec.name          = 'timely-calendar'
   spec.version       = Timely::VERSION
   spec.authors       = ['Geir Isene', 'Claude Code']
   spec.email         = ['g@isene.com']
 
-  spec.summary       = 'Terminal Calendar'
-  spec.description   = 'A TUI calendar application built on rcurses. View and manage your calendar from the terminal with month, week, and day views.'
+  spec.summary       = 'Terminal Calendar - companion to Heathrow'
+  spec.description   = 'A unified TUI calendar with Google Calendar and Outlook/365 integration, moon phases, weather, astronomy, desktop notifications, and Heathrow messaging handoff. Built on rcurses.'
   spec.homepage      = 'https://github.com/isene/timely'
   spec.license       = 'Unlicense'
 

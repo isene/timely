@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a1a"/>
+      <stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="face-glow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3a7bd5"/>
+      <stop offset="100%" style="stop-color:#1a4a8a"/>
+    </linearGradient>
+    <linearGradient id="hand-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8d9a0"/>
+      <stop offset="100%" style="stop-color:#c08040"/>
+    </linearGradient>
+    <radialGradient id="moon-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#ffffcc;stop-opacity:0.3"/>
+      <stop offset="100%" style="stop-color:#ffffcc;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+
+  <style>
+    @keyframes tick { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.9; } }
+    @keyframes moon-orbit { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    @keyframes twinkle1 { 0%,100% { opacity: 0.2; } 50% { opacity: 1; } }
+    @keyframes twinkle2 { 0%,100% { opacity: 0.8; } 50% { opacity: 0.1; } }
+    @keyframes twinkle3 { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+    .minute-hand { animation: tick 60s linear infinite; transform-origin: 128px 128px; }
+    .hour-hand { animation: tick 720s linear infinite; transform-origin: 128px 128px; }
+    .outer-glow { animation: pulse 4s ease-in-out infinite; }
+    .moon-orbit { animation: moon-orbit 30s linear infinite; transform-origin: 128px 128px; }
+    .star1 { animation: twinkle1 3s ease-in-out infinite; }
+    .star2 { animation: twinkle2 4s ease-in-out infinite; }
+    .star3 { animation: twinkle3 2.5s ease-in-out infinite; }
+    .star4 { animation: twinkle1 3.5s ease-in-out 1s infinite; }
+    .star5 { animation: twinkle2 2s ease-in-out 0.5s infinite; }
+  </style>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="32" fill="url(#bg)"/>
+
+  <!-- Stars -->
+  <circle cx="30" cy="35" r="1.5" fill="#fff" class="star1"/>
+  <circle cx="220" cy="25" r="1" fill="#fff" class="star2"/>
+  <circle cx="45" cy="210" r="1.2" fill="#fff" class="star3"/>
+  <circle cx="200" cy="220" r="1" fill="#fff" class="star4"/>
+  <circle cx="180" cy="45" r="1.3" fill="#fff" class="star5"/>
+  <circle cx="60" cy="70" r="0.8" fill="#fff" class="star2"/>
+  <circle cx="210" cy="180" r="0.8" fill="#fff" class="star1"/>
+  <circle cx="35" cy="150" r="1" fill="#fff" class="star3"/>
+
+  <!-- Outer glow ring -->
+  <circle cx="128" cy="128" r="95" fill="none" stroke="#3a7bd5" stroke-width="1" opacity="0.3" class="outer-glow"/>
+  <circle cx="128" cy="128" r="100" fill="none" stroke="#3a7bd5" stroke-width="0.5" opacity="0.15" class="outer-glow"/>
+
+  <!-- Clock face -->
+  <circle cx="128" cy="128" r="85" fill="url(#face-glow)" opacity="0.15"/>
+  <circle cx="128" cy="128" r="85" fill="none" stroke="#4a8ad5" stroke-width="2" opacity="0.7"/>
+
+  <!-- Hour markers -->
+  <g opacity="0.6">
+    <line x1="128" y1="48" x2="128" y2="56" stroke="#e8d9a0" stroke-width="2"/>
+    <line x1="128" y1="200" x2="128" y2="208" stroke="#e8d9a0" stroke-width="2"/>
+    <line x1="48" y1="128" x2="56" y2="128" stroke="#e8d9a0" stroke-width="2"/>
+    <line x1="200" y1="128" x2="208" y2="128" stroke="#e8d9a0" stroke-width="2"/>
+    <!-- Diagonal markers -->
+    <line x1="71.4" y1="71.4" x2="77" y2="77" stroke="#e8d9a0" stroke-width="1.5"/>
+    <line x1="184.6" y1="71.4" x2="179" y2="77" stroke="#e8d9a0" stroke-width="1.5"/>
+    <line x1="71.4" y1="184.6" x2="77" y2="179" stroke="#e8d9a0" stroke-width="1.5"/>
+    <line x1="184.6" y1="184.6" x2="179" y2="179" stroke="#e8d9a0" stroke-width="1.5"/>
+  </g>
+
+  <!-- Calendar grid (small, bottom-right of clock face) -->
+  <g transform="translate(145, 145)" opacity="0.5">
+    <rect x="0" y="0" width="28" height="24" rx="3" fill="none" stroke="#e8d9a0" stroke-width="0.8"/>
+    <line x1="0" y1="6" x2="28" y2="6" stroke="#e8d9a0" stroke-width="0.5"/>
+    <line x1="7" y1="6" x2="7" y2="24" stroke="#e8d9a0" stroke-width="0.3"/>
+    <line x1="14" y1="6" x2="14" y2="24" stroke="#e8d9a0" stroke-width="0.3"/>
+    <line x1="21" y1="6" x2="21" y2="24" stroke="#e8d9a0" stroke-width="0.3"/>
+    <line x1="0" y1="12" x2="28" y2="12" stroke="#e8d9a0" stroke-width="0.3"/>
+    <line x1="0" y1="18" x2="28" y2="18" stroke="#e8d9a0" stroke-width="0.3"/>
+    <!-- "Today" highlight -->
+    <rect x="14.5" y="12.5" width="6" height="5" rx="1" fill="#e8d9a0" opacity="0.4"/>
+  </g>
+
+  <!-- Moon in orbit -->
+  <g class="moon-orbit">
+    <circle cx="128" cy="30" r="10" fill="#e8d9a0" opacity="0.8"/>
+    <circle cx="123" cy="28" r="8" fill="url(#bg)"/>
+    <circle cx="128" cy="30" r="14" fill="url(#moon-glow)"/>
+  </g>
+
+  <!-- Hour hand -->
+  <g class="hour-hand">
+    <line x1="128" y1="128" x2="128" y2="78" stroke="url(#hand-glow)" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Minute hand -->
+  <g class="minute-hand">
+    <line x1="128" y1="128" x2="128" y2="58" stroke="#e8d9a0" stroke-width="2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Center dot -->
+  <circle cx="128" cy="128" r="4" fill="#e8d9a0"/>
+  <circle cx="128" cy="128" r="2" fill="#fff"/>
+
+  <!-- Planet dots along the outer ring -->
+  <circle cx="128" cy="22" r="3" fill="#BC2732" opacity="0.7" class="star1"/> <!-- Mars -->
+  <circle cx="220" cy="100" r="3.5" fill="#C08040" opacity="0.7" class="star3"/> <!-- Jupiter -->
+  <circle cx="50" cy="170" r="2.5" fill="#E6B07C" opacity="0.7" class="star2"/> <!-- Venus -->
+</svg>
