@@ -1144,6 +1144,71 @@ module Timely
 
     # --- Preferences ---
 
+    def pick_color(current = 39)
+      rows, cols = IO.console.winsize
+      # 16 columns x 16 rows = 256 colors, plus border and labels
+      pw = 52  # 16 * 3 + 4
+      ph = 20  # 16 rows + header + footer + borders
+      px = (cols - pw) / 2
+      py = (rows - ph) / 2
+
+      popup = Rcurses::Pane.new(px, py, pw, ph, 252, 0)
+      popup.border = true
+      popup.scroll = false
+
+      sel = current.to_i.clamp(0, 255)
+
+      build = -> {
+        popup.full_refresh
+        lines = []
+        lines << ""
+        lines << "  " + "Pick Color".b + "  current: " + "\u2588\u2588".fg(sel) + " #{sel}"
+        lines << ""
+        16.times do |row|
+          line = " "
+          16.times do |col|
+            c = row * 16 + col
+            if c == sel
+              line += "\u2588\u2588".fg(c).u.b
+            else
+              line += "\u2588\u2588".fg(c)
+            end
+            line += " "
+          end
+          lines << line
+        end
+        lines << ""
+        lines << "  " + "Arrows:move  ENTER:select  ESC:cancel".fg(245)
+        popup.text = lines.join("\n")
+        popup.ix = 0
+        popup.refresh
+      }
+
+      build.call
+
+      loop do
+        k = getchr
+        case k
+        when 'ESC', 'q'
+          return nil
+        when 'ENTER'
+          return sel
+        when 'RIGHT', 'l'
+          sel = (sel + 1) % 256
+          build.call
+        when 'LEFT', 'h'
+          sel = (sel - 1) % 256
+          build.call
+        when 'DOWN', 'j'
+          sel = (sel + 16) % 256
+          build.call
+        when 'UP', 'k'
+          sel = (sel - 16) % 256
+          build.call
+        end
+      end
+    end
+
     def show_calendars
       rows, cols = IO.console.winsize
       pw = [cols - 16, 64].min
@@ -1181,7 +1246,7 @@ module Timely
         end
 
         lines << ""
-        lines << "  " + "j/k:nav  h/l:color  ENTER:toggle  x:remove  q:close".fg(245)
+        lines << "  " + "j/k:nav  c:color  ENTER:toggle  x:remove  q:close".fg(245)
         popup.text = lines.join("\n")
         popup.ix = 0
         popup.refresh
@@ -1200,29 +1265,13 @@ module Timely
         when 'j', 'DOWN'
           sel = (sel + 1) % calendars.size
           build.call
-        when 'h', 'LEFT'
+        when 'c'
           cal = calendars[sel]
-          new_color = [(cal['color'] || 39).to_i - 1, 0].max
-          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
-          cal['color'] = new_color
-          build.call
-        when 'l', 'RIGHT'
-          cal = calendars[sel]
-          new_color = [(cal['color'] || 39).to_i + 1, 255].min
-          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
-          cal['color'] = new_color
-          build.call
-        when 'H'
-          cal = calendars[sel]
-          new_color = [(cal['color'] || 39).to_i - 10, 0].max
-          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
-          cal['color'] = new_color
-          build.call
-        when 'L'
-          cal = calendars[sel]
-          new_color = [(cal['color'] || 39).to_i + 10, 255].min
-          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
-          cal['color'] = new_color
+          new_color = pick_color(cal['color'] || 39)
+          if new_color
+            @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+            cal['color'] = new_color
+          end
           build.call
         when 'ENTER'
           cal = calendars[sel]
@@ -1368,12 +1417,20 @@ module Timely
         when 'ENTER'
           key, label, default = pref_keys[sel]
           current = @config.get(key, default)
-          result = popup.ask("#{label}: ", current.to_s)
-          if result && !result.strip.empty?
-            val = result.strip
-            val = val.to_i if current.is_a?(Integer)
-            @config.set(key, val)
-            @config.save
+          if is_color.call(key)
+            new_color = pick_color(current.to_i)
+            if new_color
+              @config.set(key, new_color)
+              @config.save
+            end
+          else
+            result = popup.ask("#{label}: ", current.to_s)
+            if result && !result.strip.empty?
+              val = result.strip
+              val = val.to_i if current.is_a?(Integer)
+              @config.set(key, val)
+              @config.save
+            end
           end
           build_popup.call
         end
