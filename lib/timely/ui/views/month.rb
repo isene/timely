@@ -11,7 +11,7 @@ module Timely
         # today: Date.today for bold+underline marking
         # events_by_date: hash of Date => [event_hashes] for coloring event days
         # width: available width (typically 22 chars)
-        def self.render_mini_month(year, month, selected_day, today, events_by_date, width = MINI_WIDTH, today_bg: 236)
+        def self.render_mini_month(year, month, selected_day, today, events_by_date, width = MINI_WIDTH, today_bg: 254)
           lines = []
 
           # Title: centered month and year

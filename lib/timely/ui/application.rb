@@ -517,7 +517,7 @@ module Timely
       rendered = months.map do |year, month|
         sel_day = (year == @selected_date.year && month == @selected_date.month) ? @selected_date.day : nil
         is_current = (year == @selected_date.year && month == @selected_date.month)
-        tbg = @config.get('colors.today_bg', 236)
+        tbg = @config.get('colors.today_bg', 254)
         lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1, today_bg: tbg)
         # Apply bg to current month
         if is_current
@@ -594,17 +594,28 @@ module Timely
           245
         end
 
-        header = if is_sel
+        today_bg = @config.get('colors.today_bg', 254)
+        header = if is_sel && is_today
+          header.b.u.fg(base_color).bg(today_bg)
+        elsif is_sel
           header.b.u.fg(base_color).bg(sel_alt_a)
         elsif is_today
-          header.b.u.fg(base_color)
+          header.b.u.fg(base_color).bg(today_bg)
         else
           header.fg(base_color)
         end
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
         pad = [day_col - pure_len, 0].max
-        padding = is_sel ? " ".bg(sel_alt_a) * pad : " " * pad
+        padding = if is_sel && is_today
+          " ".bg(today_bg) * pad
+        elsif is_sel
+          " ".bg(sel_alt_a) * pad
+        elsif is_today
+          " ".bg(today_bg) * pad
+        else
+          " " * pad
+        end
         header_parts << header + padding
       end
       lines << header_parts.join(" ")
