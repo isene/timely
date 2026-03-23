@@ -1169,9 +1169,9 @@ module Timely
           16.times do |col|
             c = row * 16 + col
             if c == sel
-              line += "\u2588\u2588".fg(c).u.b
+              line += "X ".bg(c).fg(255).b
             else
-              line += "\u2588\u2588".fg(c)
+              line += "  ".bg(c)
             end
             line += " "
           end
@@ -1186,13 +1186,15 @@ module Timely
 
       build.call
 
+      result = nil
       loop do
         k = getchr
         case k
         when 'ESC', 'q'
-          return nil
+          break
         when 'ENTER'
-          return sel
+          result = sel
+          break
         when 'RIGHT', 'l'
           sel = (sel + 1) % 256
           build.call
@@ -1207,6 +1209,12 @@ module Timely
           build.call
         end
       end
+
+      # Clear picker overlay
+      Rcurses.clear_screen
+      create_panes
+      render_all
+      result
     end
 
     def show_calendars
