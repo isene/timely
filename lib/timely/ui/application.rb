@@ -32,7 +32,16 @@ module Timely
       create_panes
 
       load_events_for_range
+
+      # Auto-import ICS files from incoming directory
+      incoming_count = Sources::IcsFile.watch_incoming(@db)
+      load_events_for_range if incoming_count > 0
+
       render_all
+
+      # Start background sync poller for Google Calendar
+      @poller = Sync::Poller.new(@db, @config)
+      @poller.start
 
       # Flush stdin before loop
       $stdin.getc while $stdin.wait_readable(0)
@@ -40,10 +49,20 @@ module Timely
       @running = true
       loop do
         chr = getchr(2, flush: false)
-        handle_input(chr) if chr
+        if chr
+          handle_input(chr)
+        else
+          # No input received (timeout); check if poller has new data
+          if @poller&.needs_refresh?
+            @poller.clear_refresh_flag
+            load_events_for_range
+            render_all
+          end
+        end
         break unless @running
       end
     ensure
+      @poller&.stop
       Cursor.show
     end
 
@@ -105,6 +124,12 @@ module Timely
         accept_invite
       when 'r'
         show_feedback("Reply via Heathrow: not yet implemented", 226)
+      when 'i'
+        import_ics_file
+      when 'G'
+        setup_google_calendar
+      when 'S'
+        manual_sync
       when 'P'
         show_preferences
       when '?'
@@ -322,7 +347,7 @@ module Timely
 
     # Status bar: bottom row with key hints
     def render_status_bar
-      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  P:Prefs  ?:Help  q:Quit"
+      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  S:Sync  P:Prefs  ?:Help  q:Quit"
       @panes[:status].text = " " + keys
       @panes[:status].refresh
     end
@@ -881,9 +906,174 @@ module Timely
         metadata: evt['metadata']
       )
 
+      # Push RSVP to Google Calendar if applicable
+      push_rsvp_to_google(evt)
+
       load_events_for_range
       render_all
       show_feedback("Invite accepted", 156)
+    end
+
+    def push_rsvp_to_google(evt)
+      cal = @db.get_calendars(false).find { |c| c['id'] == evt['calendar_id'] }
+      return unless cal && cal['source_type'] == 'google' && evt['external_id']
+
+      config = cal['source_config']
+      config = JSON.parse(config) if config.is_a?(String)
+      return unless config.is_a?(Hash)
+
+      google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '/home/.safe/mail')
+      return unless google.get_access_token
+
+      gcal_id = config['google_calendar_id'] || config['email']
+      # Google handles RSVP via the attendees list; we patch the event
+      google.update_event(gcal_id, evt['external_id'], {
+        title: evt['title'],
+        start_time: evt['start_time'].to_i,
+        end_time: evt['end_time'].to_i,
+        all_day: evt['all_day'].to_i == 1,
+        attendees: evt['attendees']
+      })
+    rescue => e
+      # Silently fail; local status is already updated
+      nil
+    end
+
+    # --- ICS Import ---
+
+    def import_ics_file
+      blank_bottom(" Import ICS File".b)
+      path = bottom_ask(" File path: ", "")
+      return cancel_create if path.nil? || path.strip.empty?
+
+      path = File.expand_path(path.strip)
+      unless File.exist?(path)
+        show_feedback("File not found: #{path}", 196)
+        return
+      end
+
+      result = Sources::IcsFile.import_file(path, @db)
+      load_events_for_range
+      render_all
+      msg = "Imported #{result[:imported]} event(s)"
+      msg += ", skipped #{result[:skipped]}" if result[:skipped] > 0
+      msg += " (#{result[:error]})" if result[:error]
+      show_feedback(msg, result[:error] ? 196 : 156)
+    end
+
+    # --- Google Calendar ---
+
+    def setup_google_calendar
+      blank_bottom(" Google Calendar Setup".b.fg(39))
+      email = bottom_ask(" Google email: ", "")
+      return cancel_create if email.nil? || email.strip.empty?
+      email = email.strip
+
+      safe_dir = @config.get('google.safe_dir', '/home/.safe/mail')
+
+      show_feedback("Connecting to Google Calendar...", 226)
+
+      google = Sources::Google.new(email, safe_dir: safe_dir)
+      token = google.get_access_token
+      unless token
+        show_feedback("Failed to get access token. Check credentials in #{safe_dir}", 196)
+        return
+      end
+
+      calendars = google.list_calendars
+      if calendars.empty?
+        show_feedback("No calendars found for #{email}", 196)
+        return
+      end
+
+      # Show calendars and let user pick
+      cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c[:summary]}" }.join("  ")
+      blank_bottom(" Found #{calendars.size} calendar(s)".fg(39).b)
+      pick = bottom_ask(" Add which? (#{cal_list}, 'all', or ESC): ", "all")
+      return cancel_create if pick.nil?
+
+      selected = if pick.strip.downcase == 'all'
+        calendars
+      else
+        indices = pick.strip.split(',').map { |s| s.strip.to_i - 1 }
+        indices.filter_map { |i| calendars[i] if i >= 0 && i < calendars.size }
+      end
+
+      selected.each do |gcal|
+        # Check if already added
+        existing = @db.get_calendars(false).find { |c|
+          config = c['source_config']
+          config = JSON.parse(config) if config.is_a?(String)
+          config.is_a?(Hash) && config['google_calendar_id'] == gcal[:id]
+        }
+        next if existing
+
+        @db.save_calendar(
+          name: gcal[:summary],
+          source_type: 'google',
+          source_config: { 'email' => email, 'safe_dir' => safe_dir, 'google_calendar_id' => gcal[:id] },
+          color: google_color_to_256(gcal[:color]),
+          enabled: true
+        )
+      end
+
+      # Start sync immediately
+      manual_sync
+      show_feedback("Added #{selected.size} Google calendar(s). Syncing...", 156)
+    end
+
+    def google_color_to_256(hex_color)
+      return 39 unless hex_color
+      case hex_color&.downcase
+      when '#7986cb', '#4285f4' then 69   # blue
+      when '#33b679', '#0b8043' then 35   # green
+      when '#8e24aa', '#9e69af' then 134  # purple
+      when '#e67c73', '#d50000' then 167  # red
+      when '#f6bf26', '#f4511e' then 214  # yellow/orange
+      when '#039be5', '#4fc3f7' then 39   # cyan
+      when '#616161', '#a79b8e' then 245  # gray
+      else 39
+      end
+    end
+
+    def manual_sync
+      show_feedback("Syncing calendars...", 226)
+      calendars = @db.get_calendars.select { |c| c['source_type'] == 'google' }
+
+      if calendars.empty?
+        show_feedback("No Google calendars configured. Press G to set up.", 245)
+        return
+      end
+
+      total = 0
+      calendars.each do |cal|
+        config = cal['source_config']
+        config = JSON.parse(config) if config.is_a?(String)
+        next unless config.is_a?(Hash)
+
+        google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '/home/.safe/mail')
+        next unless google.get_access_token
+
+        gcal_id = config['google_calendar_id'] || config['email']
+        now = Time.now
+        events = google.fetch_events(gcal_id, (now - 90 * 86400).to_i, (now + 90 * 86400).to_i)
+        next unless events
+
+        events.each do |evt|
+          existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
+          if existing
+            @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
+          else
+            @db.save_event(calendar_id: cal['id'], **evt)
+            total += 1
+          end
+        end
+        @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
+      end
+
+      load_events_for_range
+      render_all
+      show_feedback("Sync complete. #{total} new event(s).", 156)
     end
 
     # --- Feedback ---
@@ -1053,6 +1243,10 @@ module Timely
       help << "   n          New event         ENTER     Edit event"
       help << "   x/DEL      Delete event      a         Accept invite"
       help << "   r          Reply via Heathrow"
+      help << ""
+      help << " Sources:".b
+      help << "   i          Import ICS file   G         Setup Google Calendar"
+      help << "   S          Sync now          (auto-syncs every 5 min)"
       help << ""
       help << " P  Preferences   q  Quit   ?  This help"
       help << ""

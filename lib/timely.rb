@@ -28,6 +28,11 @@ require_relative 'timely/event'
 require_relative 'timely/astronomy'
 require_relative 'timely/weather'
 
+# Sources and sync
+require_relative 'timely/sources/ics_file'
+require_relative 'timely/sources/google'
+require_relative 'timely/sync/poller'
+
 # UI components
 require_relative 'timely/ui/panes'
 require_relative 'timely/ui/views/month'

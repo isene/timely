@@ -31,7 +31,11 @@ module Timely
           'start' => 8,
           'end' => 17
         },
-        'week_starts_on' => 'monday'
+        'week_starts_on' => 'monday',
+        'google' => {
+          'safe_dir' => '/home/.safe/mail',
+          'sync_interval' => 300
+        }
       }
       save_config(default)
       default

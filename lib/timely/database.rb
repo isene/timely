@@ -161,23 +161,28 @@ module Timely
 
     def save_event(event_data)
       now = Time.now.to_i
+      attendees_val = json_field(event_data[:attendees])
+      alarms_val = json_field(event_data[:alarms])
+      metadata_val = json_field(event_data[:metadata])
+
       if event_data[:id]
         @db.execute(
           "UPDATE events SET calendar_id=?, external_id=?, title=?, description=?,
            location=?, start_time=?, end_time=?, all_day=?, timezone=?,
-           recurrence_rule=?, status=?, organizer=?, attendees=?, my_status=?,
+           recurrence_rule=?, series_master_id=?, status=?, organizer=?, attendees=?, my_status=?,
            alarms=?, metadata=?, updated_at=? WHERE id=?",
           [
             event_data[:calendar_id], event_data[:external_id],
             event_data[:title], event_data[:description],
             event_data[:location], event_data[:start_time], event_data[:end_time],
             event_data[:all_day] ? 1 : 0, event_data[:timezone],
-            event_data[:recurrence_rule], event_data[:status],
+            event_data[:recurrence_rule], event_data[:series_master_id],
+            event_data[:status],
             event_data[:organizer],
-            event_data[:attendees]&.to_json,
+            attendees_val,
             event_data[:my_status],
-            event_data[:alarms]&.to_json,
-            event_data[:metadata]&.to_json,
+            alarms_val,
+            metadata_val,
             now, event_data[:id]
           ]
         )
@@ -186,20 +191,21 @@ module Timely
         @db.execute(
           "INSERT INTO events (calendar_id, external_id, title, description,
            location, start_time, end_time, all_day, timezone,
-           recurrence_rule, status, organizer, attendees, my_status,
+           recurrence_rule, series_master_id, status, organizer, attendees, my_status,
            alarms, metadata, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             event_data[:calendar_id] || 1, event_data[:external_id],
             event_data[:title], event_data[:description],
             event_data[:location], event_data[:start_time], event_data[:end_time],
             event_data[:all_day] ? 1 : 0, event_data[:timezone],
-            event_data[:recurrence_rule], event_data[:status] || 'confirmed',
+            event_data[:recurrence_rule], event_data[:series_master_id],
+            event_data[:status] || 'confirmed',
             event_data[:organizer],
-            event_data[:attendees]&.to_json,
+            attendees_val,
             event_data[:my_status],
-            event_data[:alarms]&.to_json,
-            event_data[:metadata]&.to_json,
+            alarms_val,
+            metadata_val,
             now, now
           ]
         )
@@ -220,10 +226,11 @@ module Timely
 
     def save_calendar(cal_data)
       now = Time.now.to_i
+      config_val = json_field(cal_data[:source_config])
       if cal_data[:id]
         @db.execute(
           "UPDATE calendars SET name=?, source_type=?, source_config=?, color=?, enabled=?, sync_token=?, last_synced_at=? WHERE id=?",
-          [cal_data[:name], cal_data[:source_type], cal_data[:source_config]&.to_json,
+          [cal_data[:name], cal_data[:source_type], config_val,
            cal_data[:color], cal_data[:enabled] ? 1 : 0,
            cal_data[:sync_token], cal_data[:last_synced_at], cal_data[:id]]
         )
@@ -231,7 +238,7 @@ module Timely
         @db.execute(
           "INSERT INTO calendars (name, source_type, source_config, color, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)",
           [cal_data[:name], cal_data[:source_type] || 'local',
-           cal_data[:source_config]&.to_json, cal_data[:color] || 39,
+           config_val, cal_data[:color] || 39,
            cal_data[:enabled] ? 1 : 0, now]
         )
         @db.last_insert_row_id
@@ -259,9 +266,34 @@ module Timely
       )
     end
 
+    # Lookup helpers
+
+    def event_exists?(calendar_id, external_id)
+      return false unless external_id
+      count = @db.get_first_value(
+        "SELECT COUNT(*) FROM events WHERE calendar_id = ? AND external_id = ?",
+        [calendar_id, external_id]
+      )
+      count.to_i > 0
+    end
+
+    def find_event_by_external_id(calendar_id, external_id)
+      @db.execute(
+        "SELECT * FROM events WHERE calendar_id = ? AND external_id = ? LIMIT 1",
+        [calendar_id, external_id]
+      ).first
+    end
+
+    def delete_event_by_external_id(calendar_id, external_id)
+      @db.execute(
+        "DELETE FROM events WHERE calendar_id = ? AND external_id = ?",
+        [calendar_id, external_id]
+      )
+    end
+
     # General operations
 
-    def execute(query, *params)
+    def execute(query, params = [])
       @db.execute(query, params)
     end
 
@@ -274,6 +306,14 @@ module Timely
     end
 
     private
+
+    # Convert a value to JSON string for storage.
+    # Handles values that are already JSON strings, arrays, or hashes.
+    def json_field(value)
+      return nil if value.nil?
+      return value if value.is_a?(String)
+      value.to_json
+    end
 
     def normalize_event_row(row)
       r = row.dup
