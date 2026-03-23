@@ -517,7 +517,7 @@ module Timely
       rendered = months.map do |year, month|
         sel_day = (year == @selected_date.year && month == @selected_date.month) ? @selected_date.day : nil
         is_current = (year == @selected_date.year && month == @selected_date.month)
-        tbg = @config.get('colors.today_bg', 250)
+        tbg = @config.get('colors.today_bg', 246)
         lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1, today_bg: tbg)
         # Apply bg to current month
         if is_current
@@ -594,13 +594,14 @@ module Timely
           245
         end
 
-        today_bg = @config.get('colors.today_bg', 250)
+        today_bg = @config.get('colors.today_bg', 246)
+        today_fg = @config.get('colors.today_fg', 232)
         header = if is_sel && is_today
-          header.b.u.fg(base_color).bg(today_bg)
+          header.b.u.fg(today_fg).bg(today_bg)
         elsif is_sel
           header.b.u.fg(base_color).bg(sel_alt_a)
         elsif is_today
-          header.b.u.fg(base_color).bg(today_bg)
+          header.b.u.fg(today_fg).bg(today_bg)
         else
           header.fg(base_color)
         end
@@ -1771,7 +1772,7 @@ module Timely
       rows, cols = IO.console.winsize
       pw = [cols - 20, 56].min
       pw = [pw, 48].max
-      ph = 18
+      ph = 19
       px = (cols - pw) / 2
       py = (rows - ph) / 2
 
@@ -1787,7 +1788,8 @@ module Timely
         ['colors.current_month_bg','Current month bg', 233],
         ['colors.saturday',       'Saturday color',   208],
         ['colors.sunday',         'Sunday color',     167],
-        ['colors.today_bg',       'Today bg',         250],
+        ['colors.today_fg',       'Today fg',         232],
+        ['colors.today_bg',       'Today bg',         246],
         ['colors.slot_selected_bg','Slot selected bg',  237],
         ['colors.info_bg',        'Info bar bg',      235],
         ['colors.status_bg',      'Status bar bg',    235],
@@ -1814,6 +1816,10 @@ module Timely
             swatch = key.include?('bg') ? "  ".bg(val.to_i) : "\u2588\u2588".fg(val.to_i)
             val_str = val.to_s.rjust(3)
             display = "  %-18s %s %s" % [label, val_str, swatch]
+          elsif key == 'default_calendar'
+            cal = @db.get_calendars(false).find { |c| c['id'] == val.to_i }
+            cal_name = cal ? " (#{cal['name']})" : ""
+            display = "  %-18s %s%s" % [label, val.to_s, cal_name]
           else
             display = "  %-18s %s" % [label, val.to_s]
           end
