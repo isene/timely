@@ -1163,6 +1163,7 @@ module Timely
       show_feedback("Syncing #{calendars.size} calendar(s) in background...", 226)
 
       Thread.new do
+        begin
         total = 0
         errors = []
         # Group calendars by email to reuse auth tokens
@@ -1220,6 +1221,10 @@ module Timely
           show_feedback("Sync complete. #{total} new event(s).", 156)
         end
         render_all
+        rescue => e
+          File.open('/tmp/timely-sync.log', 'a') { |f| f.puts "#{Time.now} Sync thread error: #{e.message}\n#{e.backtrace.first(5).join("\n")}" }
+          show_feedback("Sync error: #{e.message}", 196)
+        end
       end
     end
 
