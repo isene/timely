@@ -3,7 +3,7 @@ module Timely
     module Views
       module Month
         WEEKDAYS = %w[Mo Tu We Th Fr Sa Su].freeze
-        MINI_WIDTH = 22
+        MINI_WIDTH = 25  # 3 extra for "WW " week number prefix
 
         # Render a compact mini-month calendar.
         # Returns an array of strings (one per line), about 8-9 lines tall.
@@ -19,8 +19,8 @@ module Timely
           pad = [(width - title.length) / 2, 1].max
           lines << (" " * pad + title).b
 
-          # Weekday headers
-          header = " " + WEEKDAYS.each_with_index.map { |d, i|
+          # Weekday headers (with space for week number column)
+          header = "    " + WEEKDAYS.each_with_index.map { |d, i|
             s = d.rjust(2)
             case i
             when 5 then s.fg(208)  # Saturday
@@ -63,6 +63,10 @@ module Timely
         private
 
         def self.format_week(week, year, month, today, selected_day, events_by_date)
+          # Find week number from first non-nil day in this row
+          first_day = week.compact.first
+          wn = first_day ? Date.new(year, month, first_day).cweek.to_s.rjust(2) : "  "
+
           cells = week.map do |day|
             if day.nil?
               "  "
@@ -70,7 +74,7 @@ module Timely
               format_day(day, year, month, today, selected_day, events_by_date)
             end
           end
-          " " + cells.join(" ")
+          wn.fg(238) + " " + cells.join(" ")
         end
 
         def self.format_day(day, year, month, today, selected_day, events_by_date)

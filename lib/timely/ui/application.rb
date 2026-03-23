@@ -370,7 +370,7 @@ module Timely
     # Top pane: horizontal strip of mini-month calendars
     def render_top_pane
       today = Date.today
-      month_width = 23
+      month_width = 26  # 25 chars + 1 space separator
       months_visible = [@w / month_width, 1].max
 
       offset = months_visible / 2 + 1  # Shift left to show one more future month
@@ -442,8 +442,9 @@ module Timely
       end
       lines << weather_parts.join(" ")
 
-      # Column headers: time column + day headers
-      header_parts = [" " * time_col]
+      # Column headers: week number + time column + day headers
+      wk_num = "W#{week_start.cweek}".fg(238)
+      header_parts = [wk_num + " " * [time_col - 3, 1].max]
       7.times do |i|
         day = week_start + i
         header = "#{day.strftime('%a')} #{day.day}"
@@ -473,7 +474,7 @@ module Timely
         header_parts << header + padding
       end
       lines << header_parts.join(" ")
-      lines << ("\u2500" * @w).fg(238)
+      lines << ("-" * @w).fg(238)
 
       # Gather events for each day
       week_events = []
@@ -788,7 +789,7 @@ module Timely
 
     def blank_bottom(header = "")
       lines = []
-      lines << ("\u2500" * @w).fg(238)
+      lines << ("-" * @w).fg(238)
       lines << ""
       lines << header unless header.empty?
       while lines.length < @panes[:bottom].h
