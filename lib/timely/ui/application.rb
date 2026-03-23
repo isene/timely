@@ -130,6 +130,8 @@ module Timely
         edit_event
       when 'x', 'DEL'
         delete_event
+      when 'C-Y'
+        copy_event_to_clipboard
       when 'v'
         view_event_popup
       when 'a'
@@ -257,15 +259,34 @@ module Timely
       @events_by_date[@selected_date] || []
     end
 
+    def humanize_status(status)
+      case status.to_s
+      when 'needsAction' then 'Needs response'
+      when 'accepted' then 'Accepted'
+      when 'declined' then 'Declined'
+      when 'tentative', 'tentativelyAccepted' then 'Tentative'
+      when 'confirmed' then 'Confirmed'
+      when 'cancelled' then 'Cancelled'
+      else status.to_s
+      end
+    end
+
+    def clean_description(desc)
+      return nil unless desc
+      # Remove common garbage from Google/Outlook descriptions
+      desc.gsub(/BC\d+-Color:\s*-?\d+\s*/, '').gsub(/-::~:~::~:~.*$/m, '').strip
+    end
+
     # Find the event at the currently selected time slot
     def event_at_selected_slot
       return nil unless @selected_slot
       events = events_on_selected_day.sort_by { |e| e['start_time'].to_i }
 
       if @selected_slot < 0
-        # Negative slot = all-day event row
+        # Negative slot: -n = top (first allday), -1 = bottom (last allday)
         allday = events.select { |e| e['all_day'].to_i == 1 }
-        idx = @selected_slot.abs - 1
+        n = allday.size
+        idx = n - @selected_slot.abs  # -n -> 0 (first), -1 -> n-1 (last)
         return allday[idx]
       end
 
@@ -574,7 +595,7 @@ module Timely
       max_allday = week_allday.map(&:size).max || 0
       if max_allday > 0
         max_allday.times do |row|
-          allday_slot = -(row + 1)  # -1, -2, ...
+          allday_slot = -(max_allday - row)  # top row = most negative, bottom = -1
           is_row_selected = (@selected_slot == allday_slot)
           parts = [is_row_selected ? "  All".fg(255).b + " " : " " * time_col]
           sel_ad_bg = @config.get('colors.selected_bg_a', 235)
@@ -721,12 +742,13 @@ module Timely
         # Line 3: Status (if relevant)
         status_parts = []
         status_parts << "Status: #{evt['status']}" if evt['status']
-        status_parts << "My status: #{evt['my_status']}" if evt['my_status']
+        status_parts << "My status: #{humanize_status(evt['my_status'])}" if evt['my_status']
         lines << " #{status_parts.join('  |  ')}".fg(245) unless status_parts.empty?
 
         # Remaining lines: Description (wrapped to pane width)
-        if evt['description'] && !evt['description'].to_s.strip.empty?
-          desc = evt['description'].to_s.gsub(/\r?\n/, " ").strip
+        desc = clean_description(evt['description'])
+        if desc && !desc.empty?
+          desc = desc.gsub(/\r?\n/, " ")
           remaining = max_lines - lines.size
           if remaining > 1
             lines << ""
@@ -1017,6 +1039,38 @@ module Timely
       show_feedback("Event deleted", 156)
     end
 
+    def copy_event_to_clipboard
+      evt = event_at_selected_slot
+      return show_feedback("No event at this time slot", 245) unless evt
+
+      lines = []
+      lines << evt['title'] || '(No title)'
+      if evt['all_day'].to_i == 1
+        lines << "#{@selected_date.strftime('%A, %B %d, %Y')}  All day"
+      else
+        st = Time.at(evt['start_time'].to_i)
+        time_str = st.strftime('%A, %B %d, %Y  %H:%M')
+        time_str += " - #{Time.at(evt['end_time'].to_i).strftime('%H:%M')}" if evt['end_time']
+        lines << time_str
+      end
+      lines << "Location: #{evt['location']}" if evt['location'] && !evt['location'].to_s.strip.empty?
+      lines << "Organizer: #{evt['organizer']}" if evt['organizer'] && !evt['organizer'].to_s.strip.empty?
+      lines << "Calendar: #{evt['calendar_name'] || 'Unknown'}"
+      lines << "Status: #{humanize_status(evt['status'])}" if evt['status']
+      lines << "My status: #{humanize_status(evt['my_status'])}" if evt['my_status']
+
+      desc = clean_description(evt['description'])
+      if desc && !desc.empty?
+        lines << ""
+        lines << desc
+      end
+
+      text = lines.join("\n")
+      IO.popen('xclip -selection clipboard', 'w') { |io| io.write(text) } rescue
+        IO.popen('xsel --clipboard --input', 'w') { |io| io.write(text) } rescue nil
+      show_feedback("Event copied to clipboard", 156)
+    end
+
     def view_event_popup
       evt = event_at_selected_slot
       return show_feedback("No event at this time slot", 245) unless evt
@@ -1060,7 +1114,7 @@ module Timely
 
       status_parts = []
       status_parts << "Status: #{evt['status']}" if evt['status']
-      status_parts << "My status: #{evt['my_status']}" if evt['my_status']
+      status_parts << "My status: #{humanize_status(evt['my_status'])}" if evt['my_status']
       lines << "  #{status_parts.join('  |  ')}".fg(245) unless status_parts.empty?
 
       # Attendees
@@ -1077,10 +1131,10 @@ module Timely
       end
 
       # Description
-      if evt['description'] && !evt['description'].to_s.strip.empty?
+      desc = clean_description(evt['description'])
+      if desc && !desc.empty?
         lines << ""
         lines << "  " + ("-" * [pw - 6, 1].max).fg(238)
-        desc = evt['description'].to_s.strip
         desc.split("\n").each do |dline|
           # Word-wrap long lines
           while dline.length > pw - 6
