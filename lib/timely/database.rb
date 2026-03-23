@@ -277,6 +277,17 @@ module Timely
       count.to_i > 0
     end
 
+    # Check if a matching event exists on ANY calendar (cross-source dedup)
+    # Matches on title + start_time (within 60s tolerance)
+    def event_duplicate?(title, start_time)
+      return false unless title && start_time
+      count = @db.get_first_value(
+        "SELECT COUNT(*) FROM events WHERE title = ? AND start_time BETWEEN ? AND ?",
+        [title, start_time.to_i - 60, start_time.to_i + 60]
+      )
+      count.to_i > 0
+    end
+
     def find_event_by_external_id(calendar_id, external_id)
       @db.execute(
         "SELECT * FROM events WHERE calendar_id = ? AND external_id = ? LIMIT 1",

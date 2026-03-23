@@ -1063,6 +1063,8 @@ module Timely
           existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
           if existing
             @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
+          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
+            # Already imported via ICS; skip but don't count as new
           else
             @db.save_event(calendar_id: cal['id'], **evt)
             total += 1

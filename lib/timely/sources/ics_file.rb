@@ -171,8 +171,12 @@ module Timely
         skipped = 0
 
         events.each do |evt|
-          # Skip duplicates by UID
+          # Skip duplicates: by UID on same calendar, or by title+time across all calendars
           if evt[:uid] && db.event_exists?(calendar_id, evt[:uid])
+            skipped += 1
+            next
+          end
+          if db.event_duplicate?(evt[:title], evt[:start_time])
             skipped += 1
             next
           end

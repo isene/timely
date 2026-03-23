@@ -91,6 +91,8 @@ module Timely
               my_status: evt[:my_status],
               metadata: evt[:metadata]
             )
+          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
+            # Already imported via ICS; skip
           else
             @db.save_event(
               calendar_id: cal['id'],
