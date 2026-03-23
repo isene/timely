@@ -11,7 +11,7 @@ module Timely
         # today: Date.today for bold+underline marking
         # events_by_date: hash of Date => [event_hashes] for coloring event days
         # width: available width (typically 22 chars)
-        def self.render_mini_month(year, month, selected_day, today, events_by_date, width = MINI_WIDTH)
+        def self.render_mini_month(year, month, selected_day, today, events_by_date, width = MINI_WIDTH, today_bg: 236)
           lines = []
 
           # Title: centered month and year
@@ -41,7 +41,7 @@ module Timely
           (1..last_day.day).each do |day|
             week << day
             if week.length == 7
-              lines << format_week(week, year, month, today, selected_day, events_by_date)
+              lines << format_week(week, year, month, today, selected_day, events_by_date, today_bg)
               week = []
             end
           end
@@ -49,7 +49,7 @@ module Timely
           # Final partial week
           unless week.empty?
             week << nil while week.length < 7
-            lines << format_week(week, year, month, today, selected_day, events_by_date)
+            lines << format_week(week, year, month, today, selected_day, events_by_date, today_bg)
           end
 
           # Pad to consistent height (title + header + 6 week rows = 8 lines)
@@ -62,7 +62,7 @@ module Timely
 
         private
 
-        def self.format_week(week, year, month, today, selected_day, events_by_date)
+        def self.format_week(week, year, month, today, selected_day, events_by_date, today_bg = 236)
           # Find week number from first non-nil day in this row
           first_day = week.compact.first
           wn = first_day ? Date.new(year, month, first_day).cweek.to_s.rjust(2) : "  "
@@ -71,13 +71,13 @@ module Timely
             if day.nil?
               "  "
             else
-              format_day(day, year, month, today, selected_day, events_by_date)
+              format_day(day, year, month, today, selected_day, events_by_date, today_bg)
             end
           end
           wn.fg(238) + " " + cells.join(" ")
         end
 
-        def self.format_day(day, year, month, today, selected_day, events_by_date)
+        def self.format_day(day, year, month, today, selected_day, events_by_date, today_bg = 236)
           date = Date.new(year, month, day)
           events = events_by_date[date]
 
@@ -88,21 +88,28 @@ module Timely
           # selected_day is only meaningful when this is the selected month
           # The caller controls which month gets a non-nil selected_day
 
-          if is_selected && is_today
-            day.to_s.rjust(2).b.u.r
-          elsif is_selected
-            day.to_s.rjust(2).r
-          elsif is_today
-            day.to_s.rjust(2).b.u
-          elsif events && !events.empty?
-            color = events.first['calendar_color'] || 39
-            day.to_s.rjust(2).fg(color)
+          # Base fg color: event > sunday > saturday > default
+          base_color = if events && !events.empty?
+            events.first['calendar_color'] || 39
           elsif date.sunday?
-            day.to_s.rjust(2).fg(167)
+            167
           elsif date.saturday?
-            day.to_s.rjust(2).fg(208)
+            208
           else
-            day.to_s.rjust(2)
+            nil
+          end
+
+          d = day.to_s.rjust(2)
+          if is_selected && is_today
+            base_color ? d.b.u.fg(base_color).bg(today_bg) : d.b.u.bg(today_bg)
+          elsif is_selected
+            base_color ? d.b.u.fg(base_color) : d.b.u
+          elsif is_today
+            base_color ? d.fg(base_color).bg(today_bg) : d.bg(today_bg)
+          elsif base_color
+            d.fg(base_color)
+          else
+            d
           end
         end
       end

@@ -130,6 +130,8 @@ module Timely
         setup_google_calendar
       when 'S'
         manual_sync
+      when 'C'
+        show_calendars
       when 'P'
         show_preferences
       when '?'
@@ -363,7 +365,7 @@ module Timely
 
     # Status bar: bottom row with key hints
     def render_status_bar
-      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  S:Sync  P:Prefs  ?:Help  q:Quit"
+      keys = "d/D:Day  w/W:Week  m/M:Month  y/Y:Year  e/E:Event  n:New  g:GoTo  t:Today  i:Import  G:Google  S:Sync  C:Cal  P:Prefs  ?:Help  q:Quit"
       @panes[:status].text = " " + keys
       @panes[:status].refresh
     end
@@ -387,7 +389,8 @@ module Timely
       rendered = months.map do |year, month|
         sel_day = (year == @selected_date.year && month == @selected_date.month) ? @selected_date.day : nil
         is_current = (year == @selected_date.year && month == @selected_date.month)
-        lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1)
+        tbg = @config.get('colors.today_bg', 236)
+        lines = UI::Views::Month.render_mini_month(year, month, sel_day, today, @events_by_date, month_width - 1, today_bg: tbg)
         # Apply bg to current month
         if is_current
           lines.map { |l| l.bg(@config.get('colors.current_month_bg', 233)) }
@@ -1141,6 +1144,112 @@ module Timely
 
     # --- Preferences ---
 
+    def show_calendars
+      rows, cols = IO.console.winsize
+      pw = [cols - 16, 64].min
+      pw = [pw, 50].max
+
+      calendars = @db.get_calendars(false)
+      return show_feedback("No calendars configured", 245) if calendars.empty?
+
+      ph = [calendars.size + 7, rows - 6].min
+      px = (cols - pw) / 2
+      py = (rows - ph) / 2
+
+      popup = Rcurses::Pane.new(px, py, pw, ph, 252, 0)
+      popup.border = true
+      popup.scroll = false
+
+      sel = 0
+
+      build = -> {
+        popup.full_refresh
+        lines = []
+        lines << ""
+        lines << "  " + "Calendars".b
+        lines << "  " + ("-" * [pw - 6, 1].max).fg(238)
+
+        calendars.each_with_index do |cal, i|
+          enabled = cal['enabled'].to_i == 1
+          color = cal['color'] || 39
+          swatch = "\u2588\u2588".fg(color)
+          status = enabled ? "on".fg(35) : "off".fg(196)
+          src = cal['source_type'] || 'local'
+          name = cal['name'] || '(unnamed)'
+          display = "  #{swatch} %-22s %s  [%s]" % [name[0..21], status, src]
+          lines << (i == sel ? display.fg(39).b : display)
+        end
+
+        lines << ""
+        lines << "  " + "j/k:nav  h/l:color  ENTER:toggle  x:remove  q:close".fg(245)
+        popup.text = lines.join("\n")
+        popup.ix = 0
+        popup.refresh
+      }
+
+      build.call
+
+      loop do
+        k = getchr
+        case k
+        when 'ESC', 'q'
+          break
+        when 'k', 'UP'
+          sel = (sel - 1) % calendars.size
+          build.call
+        when 'j', 'DOWN'
+          sel = (sel + 1) % calendars.size
+          build.call
+        when 'h', 'LEFT'
+          cal = calendars[sel]
+          new_color = [(cal['color'] || 39).to_i - 1, 0].max
+          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+          cal['color'] = new_color
+          build.call
+        when 'l', 'RIGHT'
+          cal = calendars[sel]
+          new_color = [(cal['color'] || 39).to_i + 1, 255].min
+          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+          cal['color'] = new_color
+          build.call
+        when 'H'
+          cal = calendars[sel]
+          new_color = [(cal['color'] || 39).to_i - 10, 0].max
+          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+          cal['color'] = new_color
+          build.call
+        when 'L'
+          cal = calendars[sel]
+          new_color = [(cal['color'] || 39).to_i + 10, 255].min
+          @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+          cal['color'] = new_color
+          build.call
+        when 'ENTER'
+          cal = calendars[sel]
+          new_enabled = cal['enabled'].to_i == 1 ? 0 : 1
+          @db.execute("UPDATE calendars SET enabled = ? WHERE id = ?", [new_enabled, cal['id']])
+          cal['enabled'] = new_enabled
+          build.call
+        when 'x'
+          cal = calendars[sel]
+          confirm = popup.ask(" Remove '#{cal['name']}'? (y/n): ", "")
+          if confirm&.strip&.downcase == 'y'
+            @db.execute("DELETE FROM events WHERE calendar_id = ?", [cal['id']])
+            @db.execute("DELETE FROM calendars WHERE id = ?", [cal['id']])
+            calendars.delete_at(sel)
+            sel = [sel, calendars.size - 1].min
+            break if calendars.empty?
+          end
+          build.call
+        end
+      end
+
+      Rcurses.clear_screen
+      create_panes
+      load_events_for_range
+      render_all
+    end
+
     def show_preferences
       rows, cols = IO.console.winsize
       pw = [cols - 20, 56].min
@@ -1162,6 +1271,7 @@ module Timely
         ['colors.saturday',       'Saturday color',   208],
         ['colors.sunday',         'Sunday color',     167],
         ['colors.today',          'Today color',      255],
+        ['colors.today_bg',       'Today bg',         236],
         ['colors.slot_selected_bg','Slot selected bg',  237],
         ['colors.info_bg',        'Info bar bg',      235],
         ['colors.status_bg',      'Status bar bg',    235],
@@ -1298,7 +1408,7 @@ module Timely
       help << ""
       help << " Sources:".b
       help << "   i          Import ICS file   G         Setup Google Calendar"
-      help << "   S          Sync now          (auto-syncs every 5 min)"
+      help << "   S          Sync now          C         Calendar manager"
       help << ""
       help << " P  Preferences   q  Quit   ?  This help"
       help << ""
