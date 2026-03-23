@@ -60,6 +60,8 @@ module Timely
           end
           # Check notifications on idle (runs inexpensively)
           Notifications.check_and_notify(@db) rescue nil
+          # Check for Heathrow goto trigger
+          check_heathrow_goto
         end
         break unless @running
       end
@@ -244,6 +246,23 @@ module Timely
     end
 
     # --- Date/event state changes ---
+
+    def check_heathrow_goto
+      goto_file = File.join(TIMELY_HOME, 'goto')
+      return unless File.exist?(goto_file)
+      content = File.read(goto_file).strip
+      File.delete(goto_file)
+      return if content.empty?
+      date = Date.parse(content) rescue nil
+      if date
+        @selected_date = date
+        @selected_event_index = 0
+        load_events_for_range
+        render_all
+      end
+    rescue => e
+      nil
+    end
 
     def date_changed
       @selected_event_index = 0
@@ -485,7 +504,7 @@ module Timely
       month_width = 26  # 25 chars + 1 space separator
       months_visible = [@w / month_width, 1].max
 
-      offset = months_visible / 2 + 1  # Shift left to show one more future month
+      offset = 3  # Selected month is always the 4th (middle of 8)
 
       months = []
       months_visible.times do |i|
