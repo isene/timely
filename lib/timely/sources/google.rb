@@ -9,18 +9,25 @@ module Timely
       API_BASE = 'https://www.googleapis.com'
       TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
+      attr_reader :last_error
+
       def initialize(email, safe_dir: '/home/.safe/mail')
         @email = email
         @safe_dir = safe_dir
         @access_token = nil
         @token_expires_at = 0
+        @last_error = nil
       end
 
       # Get or refresh access token
       def get_access_token
         return @access_token if @access_token && Time.now.to_i < @token_expires_at
 
-        json_file = Dir.glob(File.join(@safe_dir, '*.json')).first
+        # Use the JSON credentials matching this email, or fall back to first available
+        json_file = File.join(@safe_dir, "#{@email}.json")
+        unless File.exist?(json_file)
+          json_file = Dir.glob(File.join(@safe_dir, '*.json')).first
+        end
         return nil unless json_file && File.exist?(json_file)
 
         creds = JSON.parse(File.read(json_file))
@@ -51,9 +58,15 @@ module Timely
           @token_expires_at = Time.now.to_i + (data['expires_in'] || 3600).to_i - 60
           @access_token
         else
+          err = JSON.parse(res.body) rescue {}
+          @last_error = "Token refresh failed: #{err['error_description'] || err['error'] || res.code}"
+          if err['error'] == 'invalid_grant'
+            @last_error += ". Token may need calendar scope. Run: oauth2.py --generate_oauth2_token --client_id=<ID> --client_secret=<SECRET> with calendar scope"
+          end
           nil
         end
       rescue => e
+        @last_error = "Token error: #{e.message}"
         nil
       end
 
@@ -204,9 +217,18 @@ module Timely
         uri = URI("#{API_BASE}#{path}")
         req = Net::HTTP::Get.new(uri)
         req['Authorization'] = "Bearer #{token}"
-        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 15) { |http| http.request(req) }
-        res.is_a?(Net::HTTPSuccess) ? JSON.parse(res.body) : nil
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 10, open_timeout: 5) { |http| http.request(req) }
+        if res.is_a?(Net::HTTPSuccess)
+          JSON.parse(res.body)
+        else
+          @last_error = "API #{res.code}: #{res.body[0..200] rescue ''}"
+          nil
+        end
+      rescue Timeout::Error, Net::OpenTimeout, SocketError, Errno::ECONNREFUSED => e
+        @last_error = "Network error: #{e.message}"
+        nil
       rescue => e
+        @last_error = e.message
         nil
       end
 

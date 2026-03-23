@@ -980,13 +980,15 @@ module Timely
       google = Sources::Google.new(email, safe_dir: safe_dir)
       token = google.get_access_token
       unless token
-        show_feedback("Failed to get access token. Check credentials in #{safe_dir}", 196)
+        err = google.last_error || "Check credentials in #{safe_dir}"
+        show_feedback("Token failed: #{err}", 196)
         return
       end
 
       calendars = google.list_calendars
       if calendars.empty?
-        show_feedback("No calendars found for #{email}", 196)
+        err = google.last_error || "No calendars found"
+        show_feedback("#{email}: #{err}", 196)
         return
       end
 
@@ -1050,18 +1052,25 @@ module Timely
       end
 
       total = 0
+      errors = []
       calendars.each do |cal|
         config = cal['source_config']
         config = JSON.parse(config) if config.is_a?(String)
         next unless config.is_a?(Hash)
 
         google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '/home/.safe/mail')
-        next unless google.get_access_token
+        unless google.get_access_token
+          errors << "#{cal['name']}: #{google.last_error || 'token failed'}"
+          next
+        end
 
         gcal_id = config['google_calendar_id'] || config['email']
         now = Time.now
         events = google.fetch_events(gcal_id, (now - 90 * 86400).to_i, (now + 90 * 86400).to_i)
-        next unless events
+        unless events
+          errors << "#{cal['name']}: #{google.last_error || 'fetch failed'}"
+          next
+        end
 
         events.each do |evt|
           existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
@@ -1079,7 +1088,11 @@ module Timely
 
       load_events_for_range
       render_all
-      show_feedback("Sync complete. #{total} new event(s).", 156)
+      if errors.any?
+        show_feedback("Sync: #{total} new. Errors: #{errors.join('; ')}", 196)
+      else
+        show_feedback("Sync complete. #{total} new event(s).", 156)
+      end
     end
 
     # --- Feedback ---
