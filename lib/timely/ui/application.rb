@@ -1153,7 +1153,6 @@ module Timely
     end
 
     def manual_sync
-      show_feedback("Syncing calendars...", 226)
       calendars = @db.get_calendars.select { |c| c['source_type'] == 'google' }
 
       if calendars.empty?
@@ -1161,47 +1160,66 @@ module Timely
         return
       end
 
-      total = 0
-      errors = []
-      calendars.each do |cal|
-        config = cal['source_config']
-        config = JSON.parse(config) if config.is_a?(String)
-        next unless config.is_a?(Hash)
+      show_feedback("Syncing #{calendars.size} calendar(s) in background...", 226)
 
-        google = Sources::Google.new(config['email'], safe_dir: config['safe_dir'] || '/home/.safe/mail')
-        unless google.get_access_token
-          errors << "#{cal['name']}: #{google.last_error || 'token failed'}"
-          next
+      Thread.new do
+        total = 0
+        errors = []
+        # Group calendars by email to reuse auth tokens
+        by_email = calendars.group_by do |cal|
+          config = cal['source_config']
+          config = JSON.parse(config) if config.is_a?(String)
+          config.is_a?(Hash) ? config['email'] : nil
         end
 
-        gcal_id = config['google_calendar_id'] || config['email']
         now = Time.now
-        events = google.fetch_events(gcal_id, (now - 90 * 86400).to_i, (now + 90 * 86400).to_i)
-        unless events
-          errors << "#{cal['name']}: #{google.last_error || 'fetch failed'}"
-          next
-        end
+        time_min = (now - 30 * 86400).to_i   # 30 days back
+        time_max = (now + 60 * 86400).to_i    # 60 days forward
 
-        events.each do |evt|
-          existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
-          if existing
-            @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
-          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
-            # Already imported via ICS; skip but don't count as new
-          else
-            @db.save_event(calendar_id: cal['id'], **evt)
-            total += 1
+        by_email.each do |email, cals|
+          next unless email
+          config = cals.first['source_config']
+          config = JSON.parse(config) if config.is_a?(String)
+          google = Sources::Google.new(email, safe_dir: config['safe_dir'] || '/home/.safe/mail')
+          unless google.get_access_token
+            errors << "#{email}: #{google.last_error || 'token failed'}"
+            next
+          end
+
+          cals.each do |cal|
+            cfg = cal['source_config']
+            cfg = JSON.parse(cfg) if cfg.is_a?(String)
+            gcal_id = cfg['google_calendar_id'] || email
+
+            events = google.fetch_events(gcal_id, time_min, time_max)
+            unless events
+              errors << "#{cal['name']}: #{google.last_error || 'fetch failed'}"
+              next
+            end
+
+            events.each do |evt|
+              existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
+              if existing
+                @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
+              elsif @db.event_duplicate?(evt[:title], evt[:start_time])
+                # Skip
+              else
+                @db.save_event(calendar_id: cal['id'], **evt)
+                total += 1
+              end
+            end
+            @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
           end
         end
-        @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
-      end
 
-      load_events_for_range
-      render_all
-      if errors.any?
-        show_feedback("Sync: #{total} new. Errors: #{errors.join('; ')}", 196)
-      else
-        show_feedback("Sync complete. #{total} new event(s).", 156)
+        # Signal UI to refresh
+        load_events_for_range
+        if errors.any?
+          show_feedback("Sync: #{total} new. Errors: #{errors.first}", 196)
+        else
+          show_feedback("Sync complete. #{total} new event(s).", 156)
+        end
+        render_all
       end
     end
 
