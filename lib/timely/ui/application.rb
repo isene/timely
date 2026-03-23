@@ -128,6 +128,8 @@ module Timely
         edit_event
       when 'x', 'DEL'
         delete_event
+      when 'v'
+        view_event_popup
       when 'a'
         accept_invite
       when 'r'
@@ -1011,6 +1013,107 @@ module Timely
       show_feedback("Event deleted", 156)
     end
 
+    def view_event_popup
+      evt = event_at_selected_slot
+      return show_feedback("No event at this time slot", 245) unless evt
+
+      rows, cols = IO.console.winsize
+      pw = [cols - 10, 80].min
+      pw = [pw, 50].max
+      ph = [rows - 6, 30].min
+      px = (cols - pw) / 2
+      py = (rows - ph) / 2
+
+      popup = Rcurses::Pane.new(px, py, pw, ph, 252, 0)
+      popup.border = true
+      popup.scroll = true
+
+      color = evt['calendar_color'] || 39
+      lines = []
+      lines << ""
+      lines << "  #{evt['title'] || '(No title)'}".fg(color).b
+      lines << ""
+
+      if evt['all_day'].to_i == 1
+        lines << "  #{"When:".fg(51)}  #{@selected_date.strftime('%A, %B %d, %Y')}  All day".fg(252)
+      else
+        st = Time.at(evt['start_time'].to_i)
+        time_str = st.strftime('%A, %B %d, %Y  %H:%M')
+        time_str += " - #{Time.at(evt['end_time'].to_i).strftime('%H:%M')}" if evt['end_time']
+        lines << "  #{"When:".fg(51)}      #{time_str}".fg(252)
+      end
+
+      if evt['location'] && !evt['location'].to_s.strip.empty?
+        lines << "  #{"Location:".fg(51)}  #{evt['location']}".fg(252)
+      end
+
+      if evt['organizer'] && !evt['organizer'].to_s.strip.empty?
+        lines << "  #{"Organizer:".fg(51)} #{evt['organizer']}".fg(252)
+      end
+
+      cal_name = evt['calendar_name'] || 'Unknown'
+      lines << "  #{"Calendar:".fg(51)}  #{cal_name}".fg(252)
+
+      status_parts = []
+      status_parts << "Status: #{evt['status']}" if evt['status']
+      status_parts << "My status: #{evt['my_status']}" if evt['my_status']
+      lines << "  #{status_parts.join('  |  ')}".fg(245) unless status_parts.empty?
+
+      # Attendees
+      attendees = evt['attendees']
+      attendees = JSON.parse(attendees) if attendees.is_a?(String)
+      if attendees.is_a?(Array) && attendees.any?
+        lines << ""
+        lines << "  #{"Attendees:".fg(51)}"
+        attendees.each do |a|
+          name = a['name'] || a['email'] || a['displayName'] || '?'
+          status = a['status'] || a['responseStatus'] || ''
+          lines << "    #{name}".fg(252) + (status.empty? ? "" : "  (#{status})".fg(245))
+        end
+      end
+
+      # Description
+      if evt['description'] && !evt['description'].to_s.strip.empty?
+        lines << ""
+        lines << "  " + ("-" * [pw - 6, 1].max).fg(238)
+        desc = evt['description'].to_s.strip
+        desc.split("\n").each do |dline|
+          # Word-wrap long lines
+          while dline.length > pw - 6
+            lines << "  #{dline[0, pw - 6]}".fg(248)
+            dline = dline[pw - 6..]
+          end
+          lines << "  #{dline}".fg(248)
+        end
+      end
+
+      lines << ""
+      lines << "  " + "UP/DOWN:scroll  ESC/q:close".fg(245)
+
+      popup.text = lines.join("\n")
+      popup.refresh
+
+      loop do
+        k = getchr
+        case k
+        when 'ESC', 'q', 'v'
+          break
+        when 'DOWN', 'j'
+          popup.linedown
+        when 'UP', 'k'
+          popup.lineup
+        when 'PgDOWN'
+          popup.pagedown
+        when 'PgUP'
+          popup.pageup
+        end
+      end
+
+      Rcurses.clear_screen
+      create_panes
+      render_all
+    end
+
     def accept_invite
       evt = event_at_selected_slot
       return show_feedback("No event at this time slot", 245) unless evt
@@ -1603,6 +1706,7 @@ module Timely
       help << "  " + "Events".b.fg(156)
       help << "  #{k['n']}        #{d['New event']}       #{k['ENTER']}   #{d['Edit event']}"
       help << "  #{k['x/DEL']}    #{d['Delete event']}    #{k['a']}       #{d['Accept invite']}"
+      help << "  #{k['v']}        #{d['View event details (scrollable popup)']}"
       help << "  #{k['r']}        #{d['Reply via Heathrow']}"
       help << sep
       help << "  #{k['i']}  #{d['Import ICS']}   #{k['G']}  #{d['Google setup']}   #{k['S']}  #{d['Sync now']}"

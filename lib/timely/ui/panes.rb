@@ -40,7 +40,6 @@ module Timely
           p.border = false
           p.scroll = false
         end
-        @panes[:bottom].scroll = true  # Enable scroll indicators for event details
       end
     end
   end
