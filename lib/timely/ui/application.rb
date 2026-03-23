@@ -100,6 +100,14 @@ module Timely
         move_slot_down
       when 'UP'
         move_slot_up
+      when 'PgDOWN'
+        page_slots_down
+      when 'PgUP'
+        page_slots_up
+      when 'HOME'
+        go_slot_top
+      when 'END'
+        go_slot_bottom
       when 'j'
         select_next_event_on_day
       when 'k'
@@ -192,6 +200,31 @@ module Timely
       if @selected_slot >= 0 && @selected_slot < @slot_offset
         @slot_offset = @selected_slot
       end
+      render_mid_pane
+      render_bottom_pane
+    end
+
+    def page_slots_down
+      10.times { move_slot_down }
+    end
+
+    def page_slots_up
+      10.times { move_slot_up }
+    end
+
+    def go_slot_top
+      @selected_slot = min_slot
+      @slot_offset = 0
+      render_mid_pane
+      render_bottom_pane
+    end
+
+    def go_slot_bottom
+      @selected_slot = 47
+      allday_rows = allday_count > 0 ? allday_count + 1 : 0
+      available_rows = @panes[:mid].h - 3 - allday_rows
+      available_rows = [available_rows, 1].max
+      @slot_offset = [48 - available_rows, 0].max
       render_mid_pane
       render_bottom_pane
     end
@@ -1494,36 +1527,45 @@ module Timely
     # --- Help ---
 
     def show_help
-      help = []
-      help << " Timely - Terminal Calendar".b
-      help << ""
-      help << " Navigation:".b
-      help << "   d/l/RIGHT  Next day         D/h/LEFT  Previous day"
-      help << "   w          Next week         W         Previous week"
-      help << "   m          Next month        M         Previous month"
-      help << "   y          Next year         Y         Previous year"
-      help << "   UP/DOWN    Select time slot   (scrolls at edges)"
-      help << "   j          Next event (day)  k         Previous event (day)"
-      help << "   e          Next event (any)  E         Previous event (any)"
-      help << "   t          Go to today       g         Go to date"
-      help << ""
-      help << " Events:".b
-      help << "   n          New event         ENTER     Edit event"
-      help << "   x/DEL      Delete event      a         Accept invite"
-      help << "   r          Reply via Heathrow"
-      help << ""
-      help << " Sources:".b
-      help << "   i          Import ICS file   G         Setup Google Calendar"
-      help << "   S          Sync now          C         Calendar manager"
-      help << ""
-      help << " P  Preferences   q  Quit   ?  This help"
-      help << ""
-      help << " Press any key to close..."
+      rows, cols = IO.console.winsize
+      pw = [cols - 16, 68].min
+      pw = [pw, 56].max
+      ph = 22
+      px = (cols - pw) / 2
+      py = (rows - ph) / 2
 
-      # Show help in all panes combined (using bottom pane)
-      @panes[:bottom].text = help.join("\n")
-      @panes[:bottom].full_refresh
+      popup = Rcurses::Pane.new(px, py, pw, ph, 252, 0)
+      popup.border = true
+      popup.scroll = false
+
+      help = []
+      help << ""
+      help << "  " + "Timely - Terminal Calendar".b
+      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
+      help << "  " + "Navigation:".b
+      help << "  d/RIGHT Next day    D/LEFT Prev day"
+      help << "  w Next week         W Prev week"
+      help << "  m Next month        M Prev month"
+      help << "  y Next year         Y Prev year"
+      help << "  UP/DOWN Time slot   PgUp/PgDn Page"
+      help << "  HOME All-day/top    END Bottom (23:30)"
+      help << "  j/k Cycle events    e/E Jump to event"
+      help << "  t Today             g Go to date"
+      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
+      help << "  " + "Events:".b
+      help << "  n New   ENTER Edit   x Delete   a Accept"
+      help << "  r Reply via Heathrow"
+      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
+      help << "  i Import ICS   G Google   S Sync   C Calendars"
+      help << "  P Preferences  q Quit     ? This help"
+      help << ""
+      help << "  " + "Press any key to close...".fg(245)
+
+      popup.text = help.join("\n")
+      popup.refresh
       getchr
+      Rcurses.clear_screen
+      create_panes
       render_all
     end
   end
