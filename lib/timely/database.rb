@@ -302,6 +302,45 @@ module Timely
       )
     end
 
+    # Sync helpers
+
+    def upsert_synced_event(calendar_id, evt)
+      existing = find_event_by_external_id(calendar_id, evt[:external_id])
+      if existing
+        save_event(id: existing['id'], calendar_id: calendar_id, **evt)
+        return :updated
+      elsif event_duplicate?(evt[:title], evt[:start_time])
+        return :skipped
+      else
+        save_event(calendar_id: calendar_id, **evt)
+        return :new
+      end
+    end
+
+    # Calendar update helpers
+
+    def update_calendar_color(id, color)
+      @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [color, id])
+    end
+
+    def toggle_calendar_enabled(id)
+      @db.execute("UPDATE calendars SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END WHERE id = ?", [id])
+    end
+
+    def delete_calendar_with_events(id)
+      @db.execute("DELETE FROM events WHERE calendar_id = ?", [id])
+      @db.execute("DELETE FROM calendars WHERE id = ?", [id])
+    end
+
+    def update_calendar_sync(id, last_synced_at, source_config = nil)
+      if source_config
+        @db.execute("UPDATE calendars SET source_config = ?, last_synced_at = ? WHERE id = ?",
+                    [source_config.is_a?(String) ? source_config : JSON.generate(source_config), last_synced_at, id])
+      else
+        @db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [last_synced_at, id])
+      end
+    end
+
     # General operations
 
     def execute(query, params = [])

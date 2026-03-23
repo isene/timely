@@ -162,8 +162,13 @@ module Timely
     # @selected_slot: 0-47 = time slots (00:00-23:30)
     #                 negative = all-day event rows (-1 = first, -2 = second...)
     def allday_count
-      events = events_on_selected_day
-      events.count { |e| e['all_day'].to_i == 1 }
+      @_allday_count_date ||= nil
+      if @_allday_count_date != @selected_date
+        events = events_on_selected_day
+        @_allday_count = events.count { |e| e['all_day'].to_i == 1 }
+        @_allday_count_date = @selected_date
+      end
+      @_allday_count
     end
 
     def min_slot
@@ -171,53 +176,54 @@ module Timely
       n > 0 ? -n : 0
     end
 
+    def adjust_slot_offset
+      return unless @selected_slot >= 0
+      allday_rows = allday_count > 0 ? allday_count + 1 : 0
+      available_rows = @panes[:mid].h - 3 - allday_rows
+      available_rows = [available_rows, 1].max
+      if @selected_slot - @slot_offset >= available_rows
+        @slot_offset = @selected_slot - available_rows + 1
+      elsif @selected_slot < @slot_offset
+        @slot_offset = @selected_slot
+      end
+    end
+
     def move_slot_down
-      work_start = @config.get('work_hours.start', 8) rescue 8
-      @selected_slot ||= work_start * 2
-      if @selected_slot >= 47
-        @selected_slot = min_slot
-        @slot_offset = 0
-      else
-        @selected_slot += 1
-      end
-      # Scroll time area
-      if @selected_slot >= 0
-        allday_rows = allday_count > 0 ? allday_count + 1 : 0
-        available_rows = @panes[:mid].h - 3 - allday_rows
-        available_rows = [available_rows, 1].max
-        if @selected_slot - @slot_offset >= available_rows
-          @slot_offset = @selected_slot - available_rows + 1
-        end
-      end
+      @selected_slot ||= (@config.get('work_hours.start', 8) rescue 8) * 2
+      @selected_slot = @selected_slot >= 47 ? min_slot : @selected_slot + 1
+      @slot_offset = 0 if @selected_slot == min_slot
+      adjust_slot_offset
       render_mid_pane
       render_bottom_pane
     end
 
     def move_slot_up
-      work_start = @config.get('work_hours.start', 8) rescue 8
-      @selected_slot ||= work_start * 2
-      if @selected_slot <= min_slot
-        @selected_slot = 47
+      @selected_slot ||= (@config.get('work_hours.start', 8) rescue 8) * 2
+      @selected_slot = @selected_slot <= min_slot ? 47 : @selected_slot - 1
+      if @selected_slot == 47
         allday_rows = allday_count > 0 ? allday_count + 1 : 0
-        available_rows = @panes[:mid].h - 3 - allday_rows
-        available_rows = [available_rows, 1].max
-        @slot_offset = [48 - available_rows, 0].max
-      else
-        @selected_slot -= 1
+        available = [@panes[:mid].h - 3 - allday_rows, 1].max
+        @slot_offset = [48 - available, 0].max
       end
-      if @selected_slot >= 0 && @selected_slot < @slot_offset
-        @slot_offset = @selected_slot
-      end
+      adjust_slot_offset
       render_mid_pane
       render_bottom_pane
     end
 
     def page_slots_down
-      10.times { move_slot_down }
+      @selected_slot ||= (@config.get('work_hours.start', 8) rescue 8) * 2
+      @selected_slot = [[@selected_slot + 10, 47].min, min_slot].max
+      adjust_slot_offset
+      render_mid_pane
+      render_bottom_pane
     end
 
     def page_slots_up
-      10.times { move_slot_up }
+      @selected_slot ||= (@config.get('work_hours.start', 8) rescue 8) * 2
+      @selected_slot = [[@selected_slot - 10, min_slot].max, min_slot].max
+      adjust_slot_offset
+      render_mid_pane
+      render_bottom_pane
     end
 
     def go_slot_top
@@ -280,7 +286,7 @@ module Timely
     # Find the event at the currently selected time slot
     def event_at_selected_slot
       return nil unless @selected_slot
-      events = events_on_selected_day.sort_by { |e| e['start_time'].to_i }
+      events = events_on_selected_day
 
       if @selected_slot < 0
         # Negative slot: -n = top (first allday), -1 = bottom (last allday)
@@ -392,17 +398,20 @@ module Timely
         end
       end
 
+      # Sort each day's events once up front
+      @events_by_date.each_value { |evts| evts.sort_by! { |e| e['start_time'].to_i } }
+
       # Clamp selected event index
       events = events_on_selected_day
       @selected_event_index = 0 if events.empty?
       @selected_event_index = events.length - 1 if @selected_event_index >= events.length
 
-      # Load weather (cached, background-safe)
-      lat = @config.get('location.lat', 59.9139)
-      lon = @config.get('location.lon', 10.7522)
-      @weather_forecast ||= {}
-      if @weather_forecast.empty?
+      # Load weather (cached, refetch every 6 hours)
+      if !@weather_forecast || @weather_forecast.empty? || !@_weather_fetched_at || (Time.now.to_i - @_weather_fetched_at) > 21600
+        lat = @config.get('location.lat', 59.9139)
+        lon = @config.get('location.lon', 10.7522)
         @weather_forecast = Weather.fetch(lat, lon, @db) rescue {}
+        @_weather_fetched_at = Time.now.to_i
       end
     end
 
@@ -528,9 +537,11 @@ module Timely
       gap = 1       # gap between day columns
       day_col = (@w - time_col - gap * 6) / 7  # 7 days, 6 gaps between them
       day_col = [day_col, 8].max
-      sel_bg = @config.get('colors.selected_bg_a', 235)
+      sel_alt_a = @config.get('colors.selected_bg_a', 235)
+      sel_alt_b = @config.get('colors.selected_bg_b', 234)
       alt_bg_a = @config.get('colors.alt_bg_a', 233)
       alt_bg_b = @config.get('colors.alt_bg_b', 0)
+      slot_sel_bg = @config.get('colors.slot_selected_bg', 237)
 
       lines = []
 
@@ -564,9 +575,8 @@ module Timely
           245
         end
 
-        sel_hdr_bg = @config.get('colors.selected_bg_a', 235)
         header = if is_sel
-          header.b.u.fg(base_color).bg(sel_hdr_bg)
+          header.b.u.fg(base_color).bg(sel_alt_a)
         elsif is_today
           header.b.u.fg(base_color)
         else
@@ -575,7 +585,7 @@ module Timely
 
         pure_len = Rcurses.display_width(header.respond_to?(:pure) ? header.pure : header)
         pad = [day_col - pure_len, 0].max
-        padding = is_sel ? " ".bg(sel_hdr_bg) * pad : " " * pad
+        padding = is_sel ? " ".bg(sel_alt_a) * pad : " " * pad
         header_parts << header + padding
       end
       lines << header_parts.join(" ")
@@ -586,7 +596,7 @@ module Timely
       week_allday = []
       7.times do |i|
         day = week_start + i
-        all = (@events_by_date[day] || []).sort_by { |e| e['start_time'].to_i }
+        all = @events_by_date[day] || []
         week_allday << all.select { |e| e['all_day'].to_i == 1 }
         week_events << all.reject { |e| e['all_day'].to_i == 1 }
       end
@@ -598,14 +608,12 @@ module Timely
           allday_slot = -(max_allday - row)  # top row = most negative, bottom = -1
           is_row_selected = (@selected_slot == allday_slot)
           parts = [is_row_selected ? "  All".fg(255).b + " " : " " * time_col]
-          sel_ad_bg = @config.get('colors.selected_bg_a', 235)
-          slot_bg = @config.get('colors.slot_selected_bg', 237)
           7.times do |col|
             evt = week_allday[col][row]
             day = week_start + col
             is_sel = (day == @selected_date)
             is_at = is_sel && is_row_selected
-            cell_bg = is_at ? slot_bg : (is_sel ? sel_ad_bg : nil)
+            cell_bg = is_at ? slot_sel_bg : (is_sel ? sel_alt_a : nil)
             if evt
               title = evt['title'] || "(No title)"
               color = evt['calendar_color'] || 39
@@ -617,7 +625,7 @@ module Timely
             end
             pure_len = Rcurses.display_width(cell.respond_to?(:pure) ? cell.pure : cell)
             pad = [day_col - pure_len, 0].max
-            pad_str = is_sel ? " ".bg(sel_ad_bg) * pad : " " * pad
+            pad_str = is_sel ? " ".bg(sel_alt_a) * pad : " " * pad
             parts << cell + pad_str
           end
           lines << parts.join(" ")
@@ -653,11 +661,9 @@ module Timely
         7.times do |col|
           day = week_start + col
           is_sel = (day == @selected_date)
-          sel_alt_a = @config.get('colors.selected_bg_a', 235)
-          sel_alt_b = @config.get('colors.selected_bg_b', 234)
           cell_bg_base = row.even? ? alt_bg_a : alt_bg_b
           if is_sel && is_slot_selected
-            cell_bg = @config.get('colors.slot_selected_bg', 237)
+            cell_bg = slot_sel_bg
           elsif is_sel
             cell_bg = row.even? ? sel_alt_a : sel_alt_b
           else
@@ -811,41 +817,28 @@ module Timely
     end
 
     def parse_go_to_input(input)
-      return Date.today if input.downcase == "today"
+      return Date.today if input.downcase == 'today'
 
-      # Exact date: yyyy-mm-dd
-      if input =~ /\A\d{4}-\d{1,2}-\d{1,2}\z/
-        return Date.parse(input) rescue nil
-      end
+      # Try exact date first
+      return Date.parse(input) if input =~ /\d{4}-\d{1,2}-\d{1,2}/
 
-      # Year only: 4 digits
-      if input =~ /\A\d{4}\z/
-        return Date.new(input.to_i, 1, 1) rescue nil
-      end
+      # Year only
+      return Date.new(input.to_i, 1, 1) if input =~ /\A\d{4}\z/
 
-      # Month name or abbreviation
-      month_names = %w[january february march april may june july august september october november december]
-      month_abbrevs = %w[jan feb mar apr may jun jul aug sep oct nov dec]
-
-      lower = input.downcase
-      month_names.each_with_index do |name, i|
-        if lower == name || lower == month_abbrevs[i]
-          return Date.new(@selected_date.year, i + 1, 1) rescue nil
+      # Month name
+      months = %w[jan feb mar apr may jun jul aug sep oct nov dec]
+      months.each_with_index do |m, i|
+        if input.downcase.start_with?(m)
+          return Date.new(@selected_date.year, i + 1, 1)
         end
       end
 
-      # Single number 1-12 could be month, 1-31 could be day
-      if input =~ /\A\d{1,2}\z/
-        num = input.to_i
-        if num >= 1 && num <= 31
-          # Treat as day in current month
-          last_day = Date.new(@selected_date.year, @selected_date.month, -1).day
-          day = [num, last_day].min
-          return Date.new(@selected_date.year, @selected_date.month, day) rescue nil
-        end
+      # Day number (1-31)
+      if input =~ /\A\d{1,2}\z/ && input.to_i.between?(1, 31)
+        day = [input.to_i, Date.new(@selected_date.year, @selected_date.month, -1).day].min
+        return Date.new(@selected_date.year, @selected_date.month, day)
       end
 
-      # Last resort: try Date.parse
       Date.parse(input) rescue nil
     end
 
@@ -1324,7 +1317,7 @@ module Timely
           name: gcal[:summary],
           source_type: 'google',
           source_config: { 'email' => email, 'safe_dir' => safe_dir, 'google_calendar_id' => gcal[:id] },
-          color: google_color_to_256(gcal[:color]),
+          color: source_color_to_256(gcal[:color]),
           enabled: true
         )
       end
@@ -1334,16 +1327,19 @@ module Timely
       show_feedback("Added #{selected.size} Google calendar(s). Syncing...", 156)
     end
 
-    def google_color_to_256(hex_color)
-      return 39 unless hex_color
-      case hex_color&.downcase
-      when '#7986cb', '#4285f4' then 69   # blue
-      when '#33b679', '#0b8043' then 35   # green
-      when '#8e24aa', '#9e69af' then 134  # purple
-      when '#e67c73', '#d50000' then 167  # red
-      when '#f6bf26', '#f4511e' then 214  # yellow/orange
-      when '#039be5', '#4fc3f7' then 39   # cyan
-      when '#616161', '#a79b8e' then 245  # gray
+    def source_color_to_256(color)
+      return 39 unless color
+      case color.to_s.downcase
+      when '#7986cb', '#4285f4', 'blue', 'lightblue' then 69
+      when '#33b679', '#0b8043', 'green', 'lightgreen' then 35
+      when '#8e24aa', '#9e69af', 'purple', 'lightpurple', 'grape' then 134
+      when '#e67c73', '#d50000', 'red', 'lightred', 'cranberry' then 167
+      when '#f6bf26', '#f4511e', 'yellow', 'lightyellow', 'pumpkin' then 214
+      when '#039be5', '#4fc3f7', 'teal', 'lightteal' then 37
+      when '#616161', '#a79b8e', 'gray', 'lightgray', 'grey' then 245
+      when 'orange', 'lightorange' then 208
+      when 'pink', 'lightpink' then 205
+      when 'auto' then 39
       else 39
       end
     end
@@ -1456,30 +1452,13 @@ module Timely
             'refresh_token' => token_result[:refresh_token],
             'outlook_calendar_id' => ocal[:id]
           },
-          color: outlook_color_to_256(ocal[:color]),
+          color: source_color_to_256(ocal[:color]),
           enabled: true
         )
       end
 
       manual_sync
       show_feedback("Added #{selected.size} Outlook calendar(s). Syncing...", 156)
-    end
-
-    def outlook_color_to_256(color_name)
-      return 33 unless color_name
-      case color_name.to_s.downcase
-      when 'blue', 'lightblue' then 33
-      when 'green', 'lightgreen' then 35
-      when 'purple', 'lightpurple', 'grape' then 134
-      when 'red', 'lightred', 'cranberry' then 167
-      when 'yellow', 'lightyellow', 'pumpkin' then 214
-      when 'teal', 'lightteal' then 37
-      when 'orange', 'lightorange' then 208
-      when 'pink', 'lightpink' then 205
-      when 'gray', 'lightgray', 'grey' then 245
-      when 'auto' then 33
-      else 33
-      end
     end
 
     def manual_sync
@@ -1531,17 +1510,9 @@ module Timely
             end
 
             events.each do |evt|
-              existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
-              if existing
-                @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
-              elsif @db.event_duplicate?(evt[:title], evt[:start_time])
-                # Skip
-              else
-                @db.save_event(calendar_id: cal['id'], **evt)
-                total += 1
-              end
+              total += 1 if @db.upsert_synced_event(cal['id'], evt) == :new
             end
-            @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
+            @db.update_calendar_sync(cal['id'], Time.now.to_i)
           end
         end
 
@@ -1564,15 +1535,7 @@ module Timely
           end
 
           events.each do |evt|
-            existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
-            if existing
-              @db.save_event(id: existing['id'], calendar_id: cal['id'], **evt)
-            elsif @db.event_duplicate?(evt[:title], evt[:start_time])
-              # Skip
-            else
-              @db.save_event(calendar_id: cal['id'], **evt)
-              total += 1
-            end
+            total += 1 if @db.upsert_synced_event(cal['id'], evt) == :new
           end
 
           # Persist refreshed tokens
@@ -1580,10 +1543,7 @@ module Timely
             'access_token' => outlook.instance_variable_get(:@access_token),
             'refresh_token' => outlook.instance_variable_get(:@refresh_token)
           )
-          @db.db.execute(
-            "UPDATE calendars SET source_config = ?, last_synced_at = ? WHERE id = ?",
-            [JSON.generate(new_config), Time.now.to_i, cal['id']]
-          )
+          @db.update_calendar_sync(cal['id'], Time.now.to_i, new_config)
         end
 
         # Signal UI to refresh
@@ -1749,22 +1709,20 @@ module Timely
           cal = calendars[sel]
           new_color = pick_color(cal['color'] || 39)
           if new_color
-            @db.execute("UPDATE calendars SET color = ? WHERE id = ?", [new_color, cal['id']])
+            @db.update_calendar_color(cal['id'], new_color)
             cal['color'] = new_color
           end
           build.call
         when 'ENTER'
           cal = calendars[sel]
-          new_enabled = cal['enabled'].to_i == 1 ? 0 : 1
-          @db.execute("UPDATE calendars SET enabled = ? WHERE id = ?", [new_enabled, cal['id']])
-          cal['enabled'] = new_enabled
+          @db.toggle_calendar_enabled(cal['id'])
+          cal['enabled'] = cal['enabled'].to_i == 1 ? 0 : 1
           build.call
         when 'x'
           cal = calendars[sel]
           confirm = popup.ask(" Remove '#{cal['name']}'? (y/n): ", "")
           if confirm&.strip&.downcase == 'y'
-            @db.execute("DELETE FROM events WHERE calendar_id = ?", [cal['id']])
-            @db.execute("DELETE FROM calendars WHERE id = ?", [cal['id']])
+            @db.delete_calendar_with_events(cal['id'])
             calendars.delete_at(sel)
             sel = [sel, calendars.size - 1].min
             break if calendars.empty?
@@ -1862,34 +1820,16 @@ module Timely
         when 'j', 'DOWN'
           sel = (sel + 1) % pref_keys.length
           build_popup.call
-        when 'h', 'LEFT'
+        when 'h', 'LEFT', 'l', 'RIGHT', 'H', 'L'
           key, label, default = pref_keys[sel]
           if is_color.call(key)
-            val = [(@config.get(key, default).to_i - 1), 0].max
-            @config.set(key, val)
-            @config.save
-            build_popup.call
-          end
-        when 'l', 'RIGHT'
-          key, label, default = pref_keys[sel]
-          if is_color.call(key)
-            val = [(@config.get(key, default).to_i + 1), 255].min
-            @config.set(key, val)
-            @config.save
-            build_popup.call
-          end
-        when 'H'
-          key, label, default = pref_keys[sel]
-          if is_color.call(key)
-            val = [(@config.get(key, default).to_i - 10), 0].max
-            @config.set(key, val)
-            @config.save
-            build_popup.call
-          end
-        when 'L'
-          key, label, default = pref_keys[sel]
-          if is_color.call(key)
-            val = [(@config.get(key, default).to_i + 10), 255].min
+            delta = case k
+                    when 'h', 'LEFT' then -1
+                    when 'l', 'RIGHT' then 1
+                    when 'H' then -10
+                    when 'L' then 10
+                    end
+            val = (@config.get(key, default).to_i + delta).clamp(0, 255)
             @config.set(key, val)
             @config.save
             build_popup.call

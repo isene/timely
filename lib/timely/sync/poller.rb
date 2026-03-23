@@ -78,48 +78,10 @@ module Timely
 
         changed = false
         events.each do |evt|
-          existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
-          if existing
-            @db.save_event(
-              id: existing['id'],
-              calendar_id: cal['id'],
-              external_id: evt[:external_id],
-              title: evt[:title],
-              description: evt[:description],
-              location: evt[:location],
-              start_time: evt[:start_time],
-              end_time: evt[:end_time],
-              all_day: evt[:all_day],
-              status: evt[:status],
-              organizer: evt[:organizer],
-              attendees: evt[:attendees],
-              my_status: evt[:my_status],
-              metadata: evt[:metadata]
-            )
-          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
-            # Already imported via ICS; skip
-          else
-            @db.save_event(
-              calendar_id: cal['id'],
-              external_id: evt[:external_id],
-              title: evt[:title],
-              description: evt[:description],
-              location: evt[:location],
-              start_time: evt[:start_time],
-              end_time: evt[:end_time],
-              all_day: evt[:all_day],
-              status: evt[:status],
-              organizer: evt[:organizer],
-              attendees: evt[:attendees],
-              my_status: evt[:my_status],
-              metadata: evt[:metadata]
-            )
-            changed = true
-          end
+          changed = true if @db.upsert_synced_event(cal['id'], evt) == :new
         end
 
-        # Update last_synced
-        @db.db.execute("UPDATE calendars SET last_synced_at = ? WHERE id = ?", [Time.now.to_i, cal['id']])
+        @db.update_calendar_sync(cal['id'], Time.now.to_i)
         @needs_refresh = true if changed
       end
 
@@ -141,44 +103,7 @@ module Timely
 
         changed = false
         events.each do |evt|
-          existing = @db.find_event_by_external_id(cal['id'], evt[:external_id])
-          if existing
-            @db.save_event(
-              id: existing['id'],
-              calendar_id: cal['id'],
-              external_id: evt[:external_id],
-              title: evt[:title],
-              description: evt[:description],
-              location: evt[:location],
-              start_time: evt[:start_time],
-              end_time: evt[:end_time],
-              all_day: evt[:all_day],
-              status: evt[:status],
-              organizer: evt[:organizer],
-              attendees: evt[:attendees],
-              my_status: evt[:my_status],
-              metadata: evt[:metadata]
-            )
-          elsif @db.event_duplicate?(evt[:title], evt[:start_time])
-            # Already imported via ICS or another source; skip
-          else
-            @db.save_event(
-              calendar_id: cal['id'],
-              external_id: evt[:external_id],
-              title: evt[:title],
-              description: evt[:description],
-              location: evt[:location],
-              start_time: evt[:start_time],
-              end_time: evt[:end_time],
-              all_day: evt[:all_day],
-              status: evt[:status],
-              organizer: evt[:organizer],
-              attendees: evt[:attendees],
-              my_status: evt[:my_status],
-              metadata: evt[:metadata]
-            )
-            changed = true
-          end
+          changed = true if @db.upsert_synced_event(cal['id'], evt) == :new
         end
 
         # Persist refreshed tokens back to source_config
@@ -186,10 +111,7 @@ module Timely
           'access_token' => outlook.instance_variable_get(:@access_token),
           'refresh_token' => outlook.instance_variable_get(:@refresh_token)
         )
-        @db.db.execute(
-          "UPDATE calendars SET source_config = ?, last_synced_at = ? WHERE id = ?",
-          [JSON.generate(new_config), Time.now.to_i, cal['id']]
-        )
+        @db.update_calendar_sync(cal['id'], Time.now.to_i, new_config)
         @needs_refresh = true if changed
       end
     end
