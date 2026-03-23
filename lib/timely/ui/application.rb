@@ -1538,26 +1538,32 @@ module Timely
       popup.border = true
       popup.scroll = false
 
+      k = ->(s) { s.fg(51) }      # key color
+      d = ->(s) { s.fg(252) }     # description color
+      sep = "  " + ("-" * [pw - 6, 1].max).fg(238)
+
       help = []
       help << ""
-      help << "  " + "Timely - Terminal Calendar".b
-      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
-      help << "  " + "Navigation:".b
-      help << "  d/RIGHT Next day    D/LEFT Prev day"
-      help << "  w Next week         W Prev week"
-      help << "  m Next month        M Prev month"
-      help << "  y Next year         Y Prev year"
-      help << "  UP/DOWN Time slot   PgUp/PgDn Page"
-      help << "  HOME All-day/top    END Bottom (23:30)"
-      help << "  j/k Cycle events    e/E Jump to event"
-      help << "  t Today             g Go to date"
-      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
-      help << "  " + "Events:".b
-      help << "  n New   ENTER Edit   x Delete   a Accept"
-      help << "  r Reply via Heathrow"
-      help << "  " + ("-" * [pw - 6, 1].max).fg(238)
-      help << "  i Import ICS   G Google   S Sync   C Calendars"
-      help << "  P Preferences  q Quit     ? This help"
+      help << "  " + "Timely - Terminal Calendar".b.fg(156)
+      help << sep
+      help << "  " + "Navigation".b.fg(156)
+      help << "  #{k['d/RIGHT']}  #{d['Next day']}        #{k['D/LEFT']}  #{d['Prev day']}"
+      help << "  #{k['w']}        #{d['Next week']}       #{k['W']}       #{d['Prev week']}"
+      help << "  #{k['m']}        #{d['Next month']}      #{k['M']}       #{d['Prev month']}"
+      help << "  #{k['y']}        #{d['Next year']}       #{k['Y']}       #{d['Prev year']}"
+      help << "  #{k['UP/DOWN']}  #{d['Select time slot (scrolls at edges)']}"
+      help << "  #{k['PgUp/Dn']}  #{d['Jump 10 slots']}   #{k['HOME']}    #{d['Top/all-day']}"
+      help << "  #{k['END']}      #{d['Bottom (23:30)']}  #{k['j/k']}     #{d['Cycle events']}"
+      help << "  #{k['e/E']}      #{d['Jump to event (next/prev)']}"
+      help << "  #{k['t']}        #{d['Today']}           #{k['g']}       #{d['Go to (date, Mon, yyyy)']}"
+      help << sep
+      help << "  " + "Events".b.fg(156)
+      help << "  #{k['n']}        #{d['New event']}       #{k['ENTER']}   #{d['Edit event']}"
+      help << "  #{k['x/DEL']}    #{d['Delete event']}    #{k['a']}       #{d['Accept invite']}"
+      help << "  #{k['r']}        #{d['Reply via Heathrow']}"
+      help << sep
+      help << "  #{k['i']}  #{d['Import ICS']}   #{k['G']}  #{d['Google setup']}   #{k['S']}  #{d['Sync now']}"
+      help << "  #{k['C']}  #{d['Calendars']}    #{k['P']}  #{d['Preferences']}    #{k['q']}  #{d['Quit']}"
       help << ""
       help << "  " + "Press any key to close...".fg(245)
 
