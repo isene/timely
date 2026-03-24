@@ -211,10 +211,11 @@ module Timely
         body
       end
 
-      def api_get(path)
+      def api_get(path, retries: 2)
         token = get_access_token
         return nil unless token
-        uri = URI("#{API_BASE}#{path}")
+        full_url = path.start_with?('http') ? path : "#{API_BASE}#{path}"
+        uri = URI(full_url)
         req = Net::HTTP::Get.new(uri)
         req['Authorization'] = "Bearer #{token}"
         res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 60, open_timeout: 15) { |http| http.request(req) }
@@ -225,6 +226,10 @@ module Timely
           nil
         end
       rescue Timeout::Error, Net::OpenTimeout, SocketError, Errno::ECONNREFUSED => e
+        if retries > 0
+          sleep 1
+          retry if (retries -= 1) >= 0
+        end
         @last_error = "Network error: #{e.message}"
         nil
       rescue => e
