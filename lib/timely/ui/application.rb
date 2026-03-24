@@ -859,6 +859,7 @@ module Timely
     # --- Actions ---
 
     def go_to_date
+      blank_bottom("")
       input = bottom_ask("Go to: ", "")
       return if input.nil? || input.strip.empty?
 
