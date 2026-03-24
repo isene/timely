@@ -227,6 +227,7 @@ module Timely
         uri = URI(full_url)
         req = Net::HTTP::Get.new(uri)
         req['Authorization'] = "Bearer #{token}"
+        req['Accept-Encoding'] = 'identity'
         res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
         if res.is_a?(Net::HTTPSuccess)
           JSON.parse(res.body)
@@ -248,6 +249,7 @@ module Timely
         uri = URI("#{GRAPH_BASE}#{path}")
         req = Net::HTTP::Post.new(uri)
         req['Authorization'] = "Bearer #{token}"
+        req['Accept-Encoding'] = 'identity'
         req['Content-Type'] = 'application/json'
         req.body = JSON.generate(body)
         res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
@@ -262,6 +264,7 @@ module Timely
         uri = URI("#{GRAPH_BASE}#{path}")
         req = Net::HTTP::Patch.new(uri)
         req['Authorization'] = "Bearer #{token}"
+        req['Accept-Encoding'] = 'identity'
         req['Content-Type'] = 'application/json'
         req.body = JSON.generate(body)
         res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
@@ -276,6 +279,7 @@ module Timely
         uri = URI("#{GRAPH_BASE}#{path}")
         req = Net::HTTP::Delete.new(uri)
         req['Authorization'] = "Bearer #{token}"
+        req['Accept-Encoding'] = 'identity'
         res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
         res.is_a?(Net::HTTPSuccess) || res.code == '204'
       rescue => e
