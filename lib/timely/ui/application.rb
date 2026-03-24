@@ -298,8 +298,23 @@ module Timely
 
     def clean_description(desc)
       return nil unless desc
+      desc = desc.to_s
+      # Convert HTML to plain text via w3m if it looks like HTML
+      if desc =~ /\A\s*<(!DOCTYPE|html|head|body|div|p\b)/i
+        begin
+          text = IO.popen(['w3m', '-T', 'text/html', '-dump', '-cols', '200'], 'r+') do |io|
+            io.write(desc)
+            io.close_write
+            io.read
+          end
+          desc = text if text && !text.strip.empty?
+        rescue Errno::ENOENT
+          # w3m not installed, strip tags manually
+          desc = desc.gsub(/<[^>]+>/, ' ').gsub(/&nbsp;/i, ' ').gsub(/&amp;/i, '&').gsub(/&lt;/i, '<').gsub(/&gt;/i, '>')
+        end
+      end
       # Remove common garbage from Google/Outlook descriptions
-      desc.gsub(/BC\d+-Color:\s*-?\d+\s*/, '').gsub(/-::~:~::~:~.*$/m, '').strip
+      desc.gsub(/BC\d+-Color:\s*-?\d+\s*/, '').gsub(/-::~:~::~:~.*$/m, '').gsub(/\s+/, ' ').strip
     end
 
     # Find the event at the currently selected time slot
