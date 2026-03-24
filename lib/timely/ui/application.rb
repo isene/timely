@@ -123,6 +123,9 @@ module Timely
       when 't'
         @selected_date = Date.today
         @selected_event_index = 0
+        now = Time.now
+        @selected_slot = now.hour * 2 + (now.min >= 30 ? 1 : 0)
+        @slot_offset = [@selected_slot - 5, 0].max
         date_changed
       when 'g'
         go_to_date
