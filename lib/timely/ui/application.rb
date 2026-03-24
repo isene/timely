@@ -153,6 +153,16 @@ module Timely
         manual_sync
       when 'C'
         show_calendars
+      when 'C-R'
+        load_events_for_range
+        @_cached_planets_date = nil  # Force planet recalculation
+        @weather_forecast = nil      # Force weather refresh
+        @_weather_fetched_at = nil
+        render_all
+      when 'C-L'
+        Rcurses.clear_screen
+        create_panes
+        render_all
       when 'P'
         show_preferences
       when '?'
