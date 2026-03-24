@@ -217,7 +217,7 @@ module Timely
         uri = URI("#{API_BASE}#{path}")
         req = Net::HTTP::Get.new(uri)
         req['Authorization'] = "Bearer #{token}"
-        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 60, open_timeout: 15) { |http| http.request(req) }
         if res.is_a?(Net::HTTPSuccess)
           JSON.parse(res.body)
         else
@@ -240,7 +240,7 @@ module Timely
         req['Authorization'] = "Bearer #{token}"
         req['Content-Type'] = 'application/json'
         req.body = JSON.generate(body)
-        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 60, open_timeout: 15) { |http| http.request(req) }
         res.is_a?(Net::HTTPSuccess) ? JSON.parse(res.body) : nil
       rescue => e
         nil
@@ -254,7 +254,7 @@ module Timely
         req['Authorization'] = "Bearer #{token}"
         req['Content-Type'] = 'application/json'
         req.body = JSON.generate(body)
-        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 60, open_timeout: 15) { |http| http.request(req) }
         res.is_a?(Net::HTTPSuccess) ? JSON.parse(res.body) : nil
       rescue => e
         nil
@@ -266,7 +266,7 @@ module Timely
         uri = URI("#{API_BASE}#{path}")
         req = Net::HTTP::Delete.new(uri)
         req['Authorization'] = "Bearer #{token}"
-        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 30, open_timeout: 10) { |http| http.request(req) }
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true, read_timeout: 60, open_timeout: 15) { |http| http.request(req) }
         res.is_a?(Net::HTTPSuccess) || res.code == '204'
       rescue => e
         false
