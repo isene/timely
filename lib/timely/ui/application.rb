@@ -313,8 +313,13 @@ module Timely
           desc = desc.gsub(/<[^>]+>/, ' ').gsub(/&nbsp;/i, ' ').gsub(/&amp;/i, '&').gsub(/&lt;/i, '<').gsub(/&gt;/i, '>')
         end
       end
-      # Remove common garbage from Google/Outlook descriptions
-      desc.gsub(/BC\d+-Color:\s*-?\d+\s*/, '').gsub(/-::~:~::~:~.*$/m, '').gsub(/\s+/, ' ').strip
+      # Remove common garbage from Google/Outlook/Teams descriptions
+      desc.gsub(/BC\d+-Color:\s*-?\d+\s*/, '')       # Google color metadata
+          .gsub(/-::~:~::~:~.*$/m, '')                # Google Meet block
+          .gsub(/_{3,}/, '')                           # Long underscore lines (Teams HR)
+          .gsub(/-{5,}/, '')                           # Long dash lines
+          .gsub(/\n{3,}/, "\n\n")                      # Collapse excessive blank lines
+          .strip
     end
 
     # Find the event at the currently selected time slot
