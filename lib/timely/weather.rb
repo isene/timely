@@ -31,6 +31,7 @@ module Timely
       uri = URI("https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=#{lat}&lon=#{lon}")
       req = Net::HTTP::Get.new(uri)
       req['User-Agent'] = 'timely-calendar/0.1 g@isene.com'
+      req['Accept-Encoding'] = 'identity'
 
       res = Net::HTTP.start(uri.hostname, uri.port,
                             use_ssl: true,
@@ -91,7 +92,7 @@ module Timely
       if db
         db.execute(
           "INSERT OR REPLACE INTO weather_cache (date, hour, data, fetched_at) VALUES (?, ?, ?, ?)",
-          'forecast', '00', JSON.generate(forecast), Time.now.to_i
+          ['forecast', '00', JSON.generate(forecast), Time.now.to_i]
         )
       end
 

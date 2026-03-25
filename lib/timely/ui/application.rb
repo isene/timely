@@ -154,10 +154,11 @@ module Timely
       when 'C'
         show_calendars
       when 'C-R'
-        load_events_for_range
         @_cached_planets_date = nil  # Force planet recalculation
         @weather_forecast = nil      # Force weather refresh
         @_weather_fetched_at = nil
+        @db.execute("DELETE FROM weather_cache") rescue nil  # Clear DB cache too
+        load_events_for_range
         render_all
       when 'C-L'
         Rcurses.clear_screen
@@ -280,6 +281,19 @@ module Timely
     def date_changed
       @selected_event_index = 0
       load_events_for_range
+      # If slot is in all-day area but no event there, jump to first timed event or current time
+      if @selected_slot && @selected_slot < 0 && event_at_selected_slot.nil?
+        events = events_on_selected_day
+        first_timed = events.find { |e| e['all_day'].to_i != 1 }
+        if first_timed
+          t = Time.at(first_timed['start_time'].to_i)
+          @selected_slot = t.hour * 2 + (t.min >= 30 ? 1 : 0)
+        else
+          now = Time.now
+          @selected_slot = now.hour * 2 + (now.min >= 30 ? 1 : 0)
+        end
+        @slot_offset = [@selected_slot - 5, 0].max
+      end
       render_all
     end
 
@@ -341,11 +355,18 @@ module Timely
       events = events_on_selected_day
 
       if @selected_slot < 0
-        # Negative slot: -n = top (first allday), -1 = bottom (last allday)
+        # Negative slot uses max_allday across the visible week (same as render_mid_pane)
+        week_start = @selected_date - (@selected_date.cwday - 1)
+        max_allday = 0
+        7.times do |i|
+          day = week_start + i
+          n = (@events_by_date[day] || []).count { |e| e['all_day'].to_i == 1 }
+          max_allday = n if n > max_allday
+        end
         allday = events.select { |e| e['all_day'].to_i == 1 }
-        n = allday.size
-        idx = n - @selected_slot.abs  # -n -> 0 (first), -1 -> n-1 (last)
-        return allday[idx]
+        idx = max_allday - @selected_slot.abs  # -max -> 0 (first), -1 -> max-1 (last)
+        return allday[idx] if idx >= 0 && idx < allday.size
+        return nil
       end
 
       hour = @selected_slot / 2
@@ -381,6 +402,7 @@ module Timely
       # If there are more events on the current day after the selected one, go to next
       if events.length > 0 && @selected_event_index < events.length - 1
         @selected_event_index += 1
+        move_slot_to_event(events[@selected_event_index], events)
         render_mid_pane
         render_bottom_pane
         return
@@ -393,7 +415,10 @@ module Timely
         if day_events && !day_events.empty?
           @selected_date = check_date
           @selected_event_index = 0
-          date_changed
+          load_events_for_range
+          events = events_on_selected_day
+          move_slot_to_event(events.first, events) if events.any?
+          render_all
           return
         end
       end
@@ -406,6 +431,7 @@ module Timely
       # If there are more events on the current day before the selected one, go to prev
       if events.length > 0 && @selected_event_index > 0
         @selected_event_index -= 1
+        move_slot_to_event(events[@selected_event_index], events)
         render_mid_pane
         render_bottom_pane
         return
@@ -417,13 +443,37 @@ module Timely
         day_events = @db.get_events_for_date(check_date)
         if day_events && !day_events.empty?
           @selected_date = check_date
-          @selected_event_index = day_events.length - 1
-          date_changed
+          load_events_for_range
+          events = events_on_selected_day
+          @selected_event_index = [events.length - 1, 0].max
+          move_slot_to_event(events.last, events) if events.any?
+          render_all
           return
         end
       end
 
       show_feedback("No earlier events found within the past year", 245)
+    end
+
+    def move_slot_to_event(evt, day_events)
+      return unless evt
+      if evt['all_day'].to_i == 1
+        # Compute max_allday across the visible week (same as render_mid_pane)
+        week_start = @selected_date - (@selected_date.cwday - 1)
+        max_allday = 0
+        7.times do |i|
+          day = week_start + i
+          n = (@events_by_date[day] || []).count { |e| e['all_day'].to_i == 1 }
+          max_allday = n if n > max_allday
+        end
+        allday = day_events.select { |e| e['all_day'].to_i == 1 }
+        idx = allday.index { |e| e['id'] == evt['id'] } || 0
+        @selected_slot = -(max_allday - idx)
+      else
+        t = Time.at(evt['start_time'].to_i)
+        @selected_slot = t.hour * 2 + (t.min >= 30 ? 1 : 0)
+        @slot_offset = [@selected_slot - 5, 0].max
+      end
     end
 
     # --- Data loading ---
@@ -857,7 +907,16 @@ module Timely
         astro.each { |evt| lines << " #{evt}".fg(180) } if astro.any?
 
         lines << ""
-        lines << " No events scheduled".fg(240)
+        if events.any?
+          allday = events.count { |e| e['all_day'].to_i == 1 }
+          timed = events.size - allday
+          parts = []
+          parts << "#{timed} timed" if timed > 0
+          parts << "#{allday} all-day" if allday > 0
+          lines << " #{parts.join(', ')} event#{'s' if events.size > 1} today".fg(240)
+        else
+          lines << " No events scheduled".fg(240)
+        end
       end
 
       # Pad to fill pane
@@ -1131,8 +1190,8 @@ module Timely
       end
 
       text = lines.join("\n")
-      IO.popen('xclip -selection clipboard', 'w') { |io| io.write(text) } rescue
-        IO.popen('xsel --clipboard --input', 'w') { |io| io.write(text) } rescue nil
+      IO.popen('xclip -selection clipboard', 'w') { |io| io.write(text) } rescue nil
+      IO.popen('xclip -selection primary', 'w') { |io| io.write(text) } rescue nil
       show_feedback("Event copied to clipboard", 156)
     end
 
@@ -1211,7 +1270,7 @@ module Timely
       end
 
       lines << ""
-      lines << "  " + "UP/DOWN:scroll  ESC/q:close".fg(245)
+      lines << "  " + "UP/DOWN:scroll  C-Y:copy  ESC/q:close".fg(245)
 
       popup.text = lines.join("\n")
       popup.refresh
@@ -1229,6 +1288,13 @@ module Timely
           popup.pagedown
         when 'PgUP'
           popup.pageup
+        when 'C-Y'
+          clean = lines.map { |l| l.respond_to?(:pure) ? l.pure : l.gsub(/\e\[[0-9;]*m/, '') }.join("\n")
+          IO.popen('xclip -selection clipboard', 'w') { |io| io.write(clean) } rescue nil
+          IO.popen('xclip -selection primary', 'w') { |io| io.write(clean) } rescue nil
+          lines[-1] = "  " + "Copied to clipboard".fg(156)
+          popup.text = lines.join("\n")
+          popup.refresh
         end
       end
 

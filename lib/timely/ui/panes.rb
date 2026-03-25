@@ -14,9 +14,9 @@ module Timely
       def create_panes
         @panes = {}
 
-        # Layout: info(1) + top(months, fixed 9) + mid(week, flexible) + bottom(details) + status(1)
-        # Top pane: 1 blank row + 8 month rows = 9
-        top_h = 9
+        # Layout: info(1) + top(months, fixed 10) + mid(week, flexible) + bottom(details) + status(1)
+        # Top pane: 1 blank row + 8 month rows + 1 padding row = 10
+        top_h = 10
         bottom_h = (@h * 0.2).to_i
         bottom_h = [bottom_h, 5].max
         mid_h = @h - 2 - top_h - bottom_h  # 2 = info + status
