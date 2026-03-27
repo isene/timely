@@ -345,6 +345,7 @@ module Timely
           .gsub(/-::~:~::~:~.*$/m, '')                # Google Meet block
           .gsub(/_{3,}/, '')                           # Long underscore lines (Teams HR)
           .gsub(/-{5,}/, '')                           # Long dash lines
+          .gsub(/[━═─]{3,}/, '')                       # Heavy/double/light box-drawing lines
           .gsub(/\n{3,}/, "\n\n")                      # Collapse excessive blank lines
           .strip
     end
