@@ -17,7 +17,7 @@ module Timely
           # Title: centered month and year
           title = Date.new(year, month, 1).strftime("%B %Y")
           pad = [(width - title.length) / 2, 1].max
-          lines << (" " * pad + title).b
+          lines << (" " * pad + title).bd
 
           # Weekday headers (with space for week number column)
           header = "    " + WEEKDAYS.each_with_index.map { |d, i|
@@ -101,9 +101,9 @@ module Timely
 
           d = day.to_s.rjust(2)
           if is_selected && is_today
-            base_color ? d.b.u.fg(base_color).bg(today_bg) : d.b.u.bg(today_bg)
+            base_color ? d.bd.ul.fg(base_color).bg(today_bg) : d.bd.ul.bg(today_bg)
           elsif is_selected
-            base_color ? d.b.u.fg(base_color) : d.b.u
+            base_color ? d.bd.ul.fg(base_color) : d.bd.ul
           elsif is_today
             base_color ? d.fg(base_color).bg(today_bg) : d.bg(today_bg)
           elsif base_color

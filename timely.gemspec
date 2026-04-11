@@ -28,6 +28,6 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   # Runtime dependencies
-  spec.add_runtime_dependency 'rcurses', '>= 5.0'
+  spec.add_runtime_dependency 'rcurses', '~> 7.0'
   spec.add_runtime_dependency 'sqlite3', '>= 1.4'
 end

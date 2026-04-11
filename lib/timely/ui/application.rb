@@ -22,6 +22,7 @@ module Timely
       @selected_slot = now.hour * 2 + (now.min >= 30 ? 1 : 0)
       @slot_offset = [@selected_slot - 5, 0].max  # Show a few rows above current time
       @events_by_date = {}
+      @_weather_date = Date.today
     end
 
     def run
@@ -60,6 +61,15 @@ module Timely
           end
           # Check notifications on idle (runs inexpensively)
           Notifications.check_and_notify(@db) rescue nil
+          # Refresh weather on new day
+          today = Date.today
+          if @_weather_date != today
+            @_weather_date = today
+            @weather_forecast = nil
+            @_weather_fetched_at = nil
+            load_events_for_range
+            render_all
+          end
           # Check for Heathrow goto trigger
           check_heathrow_goto
         end
@@ -178,10 +188,17 @@ module Timely
     # @selected_slot: 0-47 = time slots (00:00-23:30)
     #                 negative = all-day event rows (-1 = first, -2 = second...)
     def allday_count
+      # Return max all-day event count across the visible week (matches render_mid_pane)
       @_allday_count_date ||= nil
       if @_allday_count_date != @selected_date
-        events = events_on_selected_day
-        @_allday_count = events.count { |e| e['all_day'].to_i == 1 }
+        week_start = @selected_date - (@selected_date.cwday - 1)
+        max = 0
+        7.times do |i|
+          day = week_start + i
+          n = (@events_by_date[day] || []).count { |e| e['all_day'].to_i == 1 }
+          max = n if n > max
+        end
+        @_allday_count = max
         @_allday_count_date = @selected_date
       end
       @_allday_count
@@ -194,13 +211,14 @@ module Timely
 
     def adjust_slot_offset
       return unless @selected_slot >= 0
-      allday_rows = allday_count > 0 ? allday_count + 1 : 0
-      available_rows = @panes[:mid].h - 3 - allday_rows
+      extra_rows = allday_count > 0 ? allday_count + 1 : 0
+      available_rows = @panes[:mid].h - 3 - extra_rows
       available_rows = [available_rows, 1].max
-      if @selected_slot - @slot_offset >= available_rows
-        @slot_offset = @selected_slot - available_rows + 1
-      elsif @selected_slot < @slot_offset
-        @slot_offset = @selected_slot
+      scrolloff = 2
+      if @selected_slot - @slot_offset >= available_rows - scrolloff
+        @slot_offset = [@selected_slot - available_rows + scrolloff + 1, [48 - available_rows, 0].max].min
+      elsif @selected_slot - @slot_offset < scrolloff
+        @slot_offset = [@selected_slot - scrolloff, 0].max
       end
     end
 
@@ -217,8 +235,8 @@ module Timely
       @selected_slot ||= (@config.get('work_hours.start', 8) rescue 8) * 2
       @selected_slot = @selected_slot <= min_slot ? 47 : @selected_slot - 1
       if @selected_slot == 47
-        allday_rows = allday_count > 0 ? allday_count + 1 : 0
-        available = [@panes[:mid].h - 3 - allday_rows, 1].max
+        extra = allday_count > 0 ? allday_count + 1 : 0
+        available = [@panes[:mid].h - 3 - extra, 1].max
         @slot_offset = [48 - available, 0].max
       end
       adjust_slot_offset
@@ -251,8 +269,8 @@ module Timely
 
     def go_slot_bottom
       @selected_slot = 47
-      allday_rows = allday_count > 0 ? allday_count + 1 : 0
-      available_rows = @panes[:mid].h - 3 - allday_rows
+      extra = allday_count > 0 ? allday_count + 1 : 0
+      available_rows = @panes[:mid].h - 3 - extra
       available_rows = [available_rows, 1].max
       @slot_offset = [48 - available_rows, 0].max
       render_mid_pane
@@ -545,7 +563,7 @@ module Timely
 
     # Info bar: top row with bg color
     def render_info_bar
-      title = " Timely".b
+      title = " Timely".bd
       date_str = @selected_date.strftime("  %A, %B %d, %Y")
       phase = Astronomy.moon_phase(@selected_date)
       moon = "  #{phase[:symbol]} #{phase[:phase_name]} (#{(phase[:illumination] * 100).round}%)"
@@ -688,11 +706,11 @@ module Timely
         today_bg = @config.get('colors.today_bg', 246)
         today_fg = @config.get('colors.today_fg', 232)
         header = if is_sel && is_today
-          header.b.u.fg(today_fg).bg(today_bg)
+          header.bd.ul.fg(today_fg).bg(today_bg)
         elsif is_sel
-          header.b.u.fg(base_color).bg(sel_alt_a)
+          header.bd.ul.fg(base_color).bg(sel_alt_a)
         elsif is_today
-          header.b.u.fg(today_fg).bg(today_bg)
+          header.bd.ul.fg(today_fg).bg(today_bg)
         else
           header.fg(base_color)
         end
@@ -729,7 +747,7 @@ module Timely
         max_allday.times do |row|
           allday_slot = -(max_allday - row)  # top row = most negative, bottom = -1
           is_row_selected = (@selected_slot == allday_slot)
-          parts = [is_row_selected ? "  All".fg(255).b + " " : " " * time_col]
+          parts = [is_row_selected ? "  All".fg(255).bd + " " : " " * time_col]
           7.times do |col|
             evt = week_allday[col][row]
             day = week_start + col
@@ -741,7 +759,7 @@ module Timely
               color = evt['calendar_color'] || 39
               marker = is_at ? ">" : " "
               entry = "#{marker}#{title}"[0, day_col - 1]
-              cell = cell_bg ? entry.fg(color).b.bg(cell_bg) : entry.fg(color)
+              cell = cell_bg ? entry.fg(color).bd.bg(cell_bg) : entry.fg(color)
             else
               cell = cell_bg ? " ".bg(cell_bg) : " "
             end
@@ -777,7 +795,7 @@ module Timely
 
         # Time label: highlight if selected
         time_label = format("%02d:%02d ", hour, minute)
-        time_label = is_slot_selected ? time_label.fg(255).b : time_label.fg(238)
+        time_label = is_slot_selected ? time_label.fg(255).bd : time_label.fg(238)
 
         parts = [time_label]
         7.times do |col|
@@ -809,7 +827,7 @@ module Timely
             color = evt['calendar_color'] || 39
             entry = "#{marker}#{title}"
             entry = entry[0, day_col - 1] + "." if entry.length > day_col
-            cell = is_at_slot ? entry.fg(color).b.bg(cell_bg) : entry.fg(color).bg(cell_bg)
+            cell = is_at_slot ? entry.fg(color).bd.bg(cell_bg) : entry.fg(color).bg(cell_bg)
           else
             cell = " ".bg(cell_bg)
           end
@@ -851,7 +869,7 @@ module Timely
           time_info = st.strftime('%a %Y-%m-%d  %H:%M')
           time_info += " - #{Time.at(evt['end_time'].to_i).strftime('%H:%M')}" if evt['end_time']
         end
-        lines << " #{title}".fg(color).b + "  #{time_info}".fg(252)
+        lines << " #{title}".fg(color).bd + "  #{time_info}".fg(252)
 
         # Line 2: Location + Organizer + Calendar on same line
         details = []
@@ -898,7 +916,7 @@ module Timely
 
       else
         # No events: show day summary
-        lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".b
+        lines << " #{@selected_date.strftime('%A, %B %d, %Y')}".bd
 
         # Astronomical events (solstices, meteor showers, etc.)
         lat = @config.get('location.lat', 59.9139)
@@ -986,7 +1004,7 @@ module Timely
       if calendars.size > 1
         cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c['name']}" }.join("  ")
         default_idx = calendars.index(cal) || 0
-        blank_bottom(" New Event".fg(cal_color).b)
+        blank_bottom(" New Event".fg(cal_color).bd)
         pick = bottom_ask(" Calendar (#{cal_list}): ", (default_idx + 1).to_s)
         return cancel_create if pick.nil?
         idx = pick.strip.to_i - 1
@@ -994,11 +1012,11 @@ module Timely
         cal_color = cal['color'] || 39
       end
 
-      blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".fg(cal_color).b)
+      blank_bottom(" New Event on #{@selected_date.strftime('%A, %B %d, %Y')}".fg(cal_color).bd)
       title = bottom_ask(" Title: ", "")
       return cancel_create if title.nil? || title.strip.empty?
 
-      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      blank_bottom(" #{title.strip}".fg(cal_color).bd)
       time_str = bottom_ask(" Start time (HH:MM or 'all day'): ", default_time)
       return cancel_create if time_str.nil?
 
@@ -1013,7 +1031,7 @@ module Timely
         minute = (parts[1] || 0).to_i
         start_ts = Time.new(@selected_date.year, @selected_date.month, @selected_date.day, hour, minute, 0).to_i
 
-        blank_bottom(" #{title.strip} at #{time_str.strip}".fg(cal_color).b)
+        blank_bottom(" #{title.strip} at #{time_str.strip}".fg(cal_color).bd)
         dur_str = bottom_ask(" Duration in minutes: ", "60")
         return cancel_create if dur_str.nil?
         duration = dur_str.strip.to_i
@@ -1022,12 +1040,12 @@ module Timely
       end
 
       # Location
-      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      blank_bottom(" #{title.strip}".fg(cal_color).bd)
       location = bottom_ask(" Location (Enter to skip): ", "")
       location = nil if location.nil? || location.strip.empty?
 
       # Invitees
-      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      blank_bottom(" #{title.strip}".fg(cal_color).bd)
       invitees_str = bottom_ask(" Invite (comma-separated emails, Enter to skip): ", "")
       attendees = nil
       if invitees_str && !invitees_str.strip.empty?
@@ -1035,7 +1053,7 @@ module Timely
       end
 
       # Attachments via rtfm --pick
-      blank_bottom(" #{title.strip}".fg(cal_color).b)
+      blank_bottom(" #{title.strip}".fg(cal_color).bd)
       attach_str = bottom_ask(" Add attachments? (y/N): ", "")
       attachments = nil
       if attach_str&.strip&.downcase == 'y'
@@ -1119,7 +1137,7 @@ module Timely
       evt = event_at_selected_slot
       return show_feedback("No event at this time slot", 245) unless evt
 
-      blank_bottom(" Edit Event".b)
+      blank_bottom(" Edit Event".bd)
       new_title = bottom_ask(" Title: ", evt['title'] || "")
       return if new_title.nil?
 
@@ -1153,7 +1171,7 @@ module Timely
       evt = event_at_selected_slot
       return show_feedback("No event at this time slot", 245) unless evt
 
-      blank_bottom(" Delete Event".b)
+      blank_bottom(" Delete Event".bd)
       confirm = bottom_ask(" Delete '#{evt['title']}'? (y/n): ", "")
       return unless confirm&.strip&.downcase == 'y'
 
@@ -1214,7 +1232,7 @@ module Timely
       color = evt['calendar_color'] || 39
       lines = []
       lines << ""
-      lines << "  #{evt['title'] || '(No title)'}".fg(color).b
+      lines << "  #{evt['title'] || '(No title)'}".fg(color).bd
       lines << ""
 
       if evt['all_day'].to_i == 1
@@ -1384,7 +1402,7 @@ module Timely
     # --- ICS Import ---
 
     def import_ics_file
-      blank_bottom(" Import ICS File".b)
+      blank_bottom(" Import ICS File".bd)
       path = bottom_ask(" File path: ", "")
       return cancel_create if path.nil? || path.strip.empty?
 
@@ -1406,7 +1424,7 @@ module Timely
     # --- Google Calendar ---
 
     def setup_google_calendar
-      blank_bottom(" Google Calendar Setup".b.fg(39))
+      blank_bottom(" Google Calendar Setup".bd.fg(39))
       email = bottom_ask(" Google email: ", "")
       return cancel_create if email.nil? || email.strip.empty?
       email = email.strip
@@ -1432,7 +1450,7 @@ module Timely
 
       # Show calendars and let user pick
       cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c[:summary]}" }.join("  ")
-      blank_bottom(" Found #{calendars.size} calendar(s)".fg(39).b)
+      blank_bottom(" Found #{calendars.size} calendar(s)".fg(39).bd)
       pick = bottom_ask(" Add which? (#{cal_list}, 'all', or ESC): ", "all")
       return cancel_create if pick.nil?
 
@@ -1486,7 +1504,7 @@ module Timely
     # --- Outlook Calendar ---
 
     def setup_outlook_calendar
-      blank_bottom(" Outlook/365 Calendar Setup".b.fg(33))
+      blank_bottom(" Outlook/365 Calendar Setup".bd.fg(33))
 
       # Get client_id (from Azure app registration)
       default_client_id = @config.get('outlook.client_id', '')
@@ -1522,11 +1540,11 @@ module Timely
       user_code = auth['user_code']
       verify_url = auth['verification_uri'] || 'https://microsoft.com/devicelogin'
 
-      blank_bottom(" Outlook Device Login".b.fg(33))
+      blank_bottom(" Outlook Device Login".bd.fg(33))
       lines = [("-" * @w).fg(238)]
       lines << ""
       lines << " Go to: #{verify_url}".fg(51)
-      lines << " Enter code: #{user_code}".fg(226).b
+      lines << " Enter code: #{user_code}".fg(226).bd
       lines << ""
       lines << " Waiting for authorization...".fg(245)
       while lines.length < @panes[:bottom].h
@@ -1561,7 +1579,7 @@ module Timely
 
       # Let user pick calendars
       cal_list = calendars.each_with_index.map { |c, i| "#{i + 1}:#{c[:name]}" }.join("  ")
-      blank_bottom(" Found #{calendars.size} Outlook calendar(s)".fg(33).b)
+      blank_bottom(" Found #{calendars.size} Outlook calendar(s)".fg(33).bd)
       pick = bottom_ask(" Add which? (#{cal_list}, 'all', or ESC): ", "all")
       return cancel_create if pick.nil?
 
@@ -1733,14 +1751,14 @@ module Timely
         popup.full_refresh
         lines = []
         lines << ""
-        lines << "  " + "Pick Color".b + "  current: " + "\u2588\u2588".fg(sel) + " #{sel}"
+        lines << "  " + "Pick Color".bd + "  current: " + "\u2588\u2588".fg(sel) + " #{sel}"
         lines << ""
         16.times do |row|
           line = " "
           16.times do |col|
             c = row * 16 + col
             if c == sel
-              line += "X ".bg(c).fg(255).b
+              line += "X ".bg(c).fg(255).bd
             else
               line += "  ".bg(c)
             end
@@ -1810,7 +1828,7 @@ module Timely
         popup.full_refresh
         lines = []
         lines << ""
-        lines << "  " + "Calendars".b
+        lines << "  " + "Calendars".bd
         lines << "  " + ("-" * [pw - 6, 1].max).fg(238)
 
         calendars.each_with_index do |cal, i|
@@ -1821,7 +1839,7 @@ module Timely
           src = cal['source_type'] || 'local'
           name = cal['name'] || '(unnamed)'
           display = "  #{swatch} %-22s %s  [%s]" % [name[0..21], status, src]
-          lines << (i == sel ? display.fg(39).b : display)
+          lines << (i == sel ? display.fg(39).bd : display)
         end
 
         lines << ""
@@ -1915,7 +1933,7 @@ module Timely
         inner_w = pw - 4
         lines = []
         lines << ""
-        lines << "  " + "Preferences".b
+        lines << "  " + "Preferences".bd
         lines << "  " + ("\u2500" * [inner_w - 3, 1].max).fg(238)
 
         pref_keys.each_with_index do |(key, label, default), i|
@@ -1932,7 +1950,7 @@ module Timely
             display = "  %-18s %s" % [label, val.to_s]
           end
           if i == sel
-            lines << display.fg(39).b
+            lines << display.fg(39).bd
           else
             lines << display
           end
@@ -2025,9 +2043,9 @@ module Timely
 
       help = []
       help << ""
-      help << "  " + "Timely - Terminal Calendar".b.fg(156)
+      help << "  " + "Timely - Terminal Calendar".bd.fg(156)
       help << sep
-      help << "  " + "Navigation".b.fg(156)
+      help << "  " + "Navigation".bd.fg(156)
       help << "  #{k['d/RIGHT']}  #{d['Next day']}        #{k['D/LEFT']}  #{d['Prev day']}"
       help << "  #{k['w']}        #{d['Next week']}       #{k['W']}       #{d['Prev week']}"
       help << "  #{k['m']}        #{d['Next month']}      #{k['M']}       #{d['Prev month']}"
@@ -2038,7 +2056,7 @@ module Timely
       help << "  #{k['e/E']}      #{d['Jump to event (next/prev)']}"
       help << "  #{k['t']}        #{d['Today']}           #{k['g']}       #{d['Go to (date, Mon, yyyy)']}"
       help << sep
-      help << "  " + "Events".b.fg(156)
+      help << "  " + "Events".bd.fg(156)
       help << "  #{k['n']}        #{d['New event']}       #{k['ENTER']}   #{d['Edit event']}"
       help << "  #{k['x/DEL']}    #{d['Delete event']}    #{k['a']}       #{d['Accept invite']}"
       help << "  #{k['v']}        #{d['View event details (scrollable popup)']}"
