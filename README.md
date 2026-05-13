@@ -72,10 +72,45 @@ timely
 
 ### Connect Google Calendar
 
-1. Press `G`, enter your Google email
-2. Credentials: place your OAuth2 JSON + refresh token in the configured `safe_dir`
-   (default: `~/.config/timely/credentials/`)
-3. Requires both `https://mail.google.com/` and `https://www.googleapis.com/auth/calendar` scopes
+You need an OAuth2 client (JSON file from Google Cloud Console) and a
+refresh token (acquired once via the OAuth consent flow). Setup:
+
+**1. Create an OAuth2 client in Google Cloud Console**
+
+- Go to <https://console.cloud.google.com/>, create or pick a project
+- Enable the **Google Calendar API** and **Gmail API** under "APIs & Services"
+- Under "OAuth consent screen", configure (User Type: External, add
+  yourself as a test user). Add scopes:
+  - `https://www.googleapis.com/auth/calendar`
+  - `https://mail.google.com/`
+- Under "Credentials" → "Create credentials" → "OAuth client ID" → type
+  "Desktop app". Download the JSON.
+- Save the downloaded file as **`<your-email>.json`** in your
+  `safe_dir` (default `~/.config/timely/credentials/`).
+
+The downloaded JSON has an `installed` block with `client_id` and
+`client_secret` — that's the structure timely expects.
+
+**2. Get a refresh token (one-time)**
+
+Run timely and press `G`, enter your email. Timely will print an
+authorisation URL, open it in your browser, sign in, grant the
+requested scopes, and copy the resulting code back to timely. The
+refresh token is then written as **`<your-email>.txt`** alongside
+the JSON.
+
+**3. Filenames in `safe_dir` recap**
+
+```
+~/.config/timely/credentials/
+  ├─ you@example.com.json   ← OAuth client JSON from Google Cloud Console
+  └─ you@example.com.txt    ← refresh token (one line), created by `G` setup
+```
+
+Both files together are what timely needs to refresh access tokens
+on every sync. Required scopes: `https://www.googleapis.com/auth/calendar`
+and `https://mail.google.com/` (the Gmail scope is used for invite
+reading/RSVPs).
 
 ### Connect Outlook/365
 
